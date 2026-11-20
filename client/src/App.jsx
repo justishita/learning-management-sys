@@ -7,6 +7,7 @@ import Login from "@/pages/Login"
 import Signup from "@/pages/Signup"
 import Courses from "@/pages/Courses"
 import Instructor from "@/pages/Instructor"
+import CourseEditor from "@/pages/CourseEditor"
 
 function RootRedirect() {
   const { user, loading } = useAuth()
@@ -64,6 +65,14 @@ export default function App() {
                 element={
                   <ProtectedRoute allowedRole="INSTRUCTOR">
                     <Instructor />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/instructor/courses/:id"
+                element={
+                  <ProtectedRoute allowedRole="INSTRUCTOR">
+                    <CourseEditor />
                   </ProtectedRoute>
                 }
               />

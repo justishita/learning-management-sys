@@ -1,0 +1,637 @@
+import { useState, useEffect } from "react"
+import { useParams, Link, useNavigate } from "react-router-dom"
+import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Textarea } from "@/components/ui/textarea"
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
+import {
+  Dialog,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog"
+
+export default function CourseEditor() {
+  const { id } = useParams()
+  const navigate = useNavigate()
+
+  const [course, setCourse] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState("")
+
+  // Course Edit Modal
+  const [isCourseModalOpen, setIsCourseModalOpen] = useState(false)
+  const [courseTitle, setCourseTitle] = useState("")
+  const [courseDesc, setCourseDesc] = useState("")
+
+  // Module Modal State
+  const [isModuleModalOpen, setIsModuleModalOpen] = useState(false)
+  const [editingModule, setEditingModule] = useState(null) // null for create
+  const [moduleTitle, setModuleTitle] = useState("")
+
+  // Lesson Modal State
+  const [isLessonModalOpen, setIsLessonModalOpen] = useState(false)
+  const [activeModuleId, setActiveModuleId] = useState(null)
+  const [editingLesson, setEditingLesson] = useState(null) // null for create
+  const [lessonTitle, setLessonTitle] = useState("")
+  const [lessonType, setLessonType] = useState("TEXT")
+  const [lessonContent, setLessonContent] = useState("")
+  const [lessonVideoUrl, setLessonVideoUrl] = useState("")
+  const [lessonLevel, setLessonLevel] = useState("Beginner")
+  const [lessonKeywords, setLessonKeywords] = useState("")
+
+  const fetchCourse = async () => {
+    try {
+      setLoading(true)
+      const res = await fetch(`/api/instructor/courses/${id}`, {
+        credentials: "include",
+      })
+      if (!res.ok) throw new Error("Course not found or access denied")
+      const data = await res.json()
+      setCourse(data.course)
+      setCourseTitle(data.course.title)
+      setCourseDesc(data.course.description || "")
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    fetchCourse()
+  }, [id])
+
+  // Course actions
+  const handleTogglePublish = async () => {
+    try {
+      const res = await fetch(`/api/instructor/courses/${id}/publish`, {
+        method: "PATCH",
+        credentials: "include",
+      })
+      if (!res.ok) throw new Error("Failed to toggle publish status")
+      const data = await res.json()
+      setCourse((prev) => ({ ...prev, isPublished: data.course.isPublished }))
+    } catch (err) {
+      alert(err.message)
+    }
+  }
+
+  const handleUpdateCourseDetails = async (e) => {
+    e.preventDefault()
+    try {
+      const res = await fetch(`/api/instructor/courses/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          title: courseTitle.trim(),
+          description: courseDesc.trim() || null,
+        }),
+      })
+      if (!res.ok) throw new Error("Failed to update course details")
+      const data = await res.json()
+      setCourse((prev) => ({ ...prev, ...data.course }))
+      setIsCourseModalOpen(false)
+    } catch (err) {
+      alert(err.message)
+    }
+  }
+
+  const handleDeleteCourse = async () => {
+    if (!window.confirm("Are you sure you want to delete this course and all its contents?")) {
+      return
+    }
+    try {
+      const res = await fetch(`/api/instructor/courses/${id}`, {
+        method: "DELETE",
+        credentials: "include",
+      })
+      if (!res.ok) throw new Error("Failed to delete course")
+      navigate("/instructor")
+    } catch (err) {
+      alert(err.message)
+    }
+  }
+
+  // Module actions
+  const openCreateModule = () => {
+    setEditingModule(null)
+    setModuleTitle("")
+    setIsModuleModalOpen(true)
+  }
+
+  const openEditModule = (mod) => {
+    setEditingModule(mod)
+    setModuleTitle(mod.title)
+    setIsModuleModalOpen(true)
+  }
+
+  const handleSaveModule = async (e) => {
+    e.preventDefault()
+    if (!moduleTitle.trim()) return
+
+    try {
+      if (editingModule) {
+        const res = await fetch(`/api/instructor/modules/${editingModule.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ title: moduleTitle.trim() }),
+        })
+        if (!res.ok) throw new Error("Failed to update module")
+      } else {
+        const res = await fetch(`/api/instructor/courses/${id}/modules`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ title: moduleTitle.trim() }),
+        })
+        if (!res.ok) throw new Error("Failed to create module")
+      }
+
+      setIsModuleModalOpen(false)
+      await fetchCourse()
+    } catch (err) {
+      alert(err.message)
+    }
+  }
+
+  const handleDeleteModule = async (moduleId) => {
+    if (!window.confirm("Delete this module and its lessons?")) return
+    try {
+      const res = await fetch(`/api/instructor/modules/${moduleId}`, {
+        method: "DELETE",
+        credentials: "include",
+      })
+      if (!res.ok) throw new Error("Failed to delete module")
+      await fetchCourse()
+    } catch (err) {
+      alert(err.message)
+    }
+  }
+
+  // Lesson actions
+  const openCreateLesson = (moduleId) => {
+    setActiveModuleId(moduleId)
+    setEditingLesson(null)
+    setLessonTitle("")
+    setLessonType("TEXT")
+    setLessonContent("")
+    setLessonVideoUrl("")
+    setLessonLevel("Beginner")
+    setLessonKeywords("")
+    setIsLessonModalOpen(true)
+  }
+
+  const openEditLesson = (moduleId, lesson) => {
+    setActiveModuleId(moduleId)
+    setEditingLesson(lesson)
+    setLessonTitle(lesson.title)
+    setLessonType(lesson.type)
+    setLessonContent(lesson.content || "")
+    setLessonVideoUrl(lesson.videoUrl || "")
+    setLessonLevel(lesson.level || "Beginner")
+    setLessonKeywords(Array.isArray(lesson.keywords) ? lesson.keywords.join(", ") : "")
+    setIsLessonModalOpen(true)
+  }
+
+  const handleSaveLesson = async (e) => {
+    e.preventDefault()
+    if (!lessonTitle.trim()) return
+
+    const payload = {
+      title: lessonTitle.trim(),
+      type: lessonType,
+      content: lessonType === "TEXT" ? lessonContent : null,
+      videoUrl: lessonType === "VIDEO" ? lessonVideoUrl.trim() : null,
+      level: lessonLevel.trim() || null,
+      keywords: lessonKeywords
+        ? lessonKeywords.split(",").map((k) => k.trim()).filter(Boolean)
+        : [],
+    }
+
+    try {
+      if (editingLesson) {
+        const res = await fetch(`/api/instructor/lessons/${editingLesson.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify(payload),
+        })
+        if (!res.ok) {
+          const data = await res.json()
+          throw new Error(data.error || "Failed to update lesson")
+        }
+      } else {
+        const res = await fetch(`/api/instructor/modules/${activeModuleId}/lessons`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify(payload),
+        })
+        if (!res.ok) {
+          const data = await res.json()
+          throw new Error(data.error || "Failed to create lesson")
+        }
+      }
+
+      setIsLessonModalOpen(false)
+      await fetchCourse()
+    } catch (err) {
+      alert(err.message)
+    }
+  }
+
+  const handleDeleteLesson = async (lessonId) => {
+    if (!window.confirm("Delete this lesson?")) return
+    try {
+      const res = await fetch(`/api/instructor/lessons/${lessonId}`, {
+        method: "DELETE",
+        credentials: "include",
+      })
+      if (!res.ok) throw new Error("Failed to delete lesson")
+      await fetchCourse()
+    } catch (err) {
+      alert(err.message)
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="flex min-h-[50vh] items-center justify-center">
+        <p className="text-sm text-muted-foreground">Loading course editor...</p>
+      </div>
+    )
+  }
+
+  if (error || !course) {
+    return (
+      <div className="container mx-auto p-6 max-w-4xl text-center space-y-4">
+        <p className="text-destructive">{error || "Course not found"}</p>
+        <Link to="/instructor">
+          <Button variant="outline">Back to Courses</Button>
+        </Link>
+      </div>
+    )
+  }
+
+  return (
+    <div className="container mx-auto p-6 max-w-5xl space-y-8">
+      {/* Top Navigation & Status */}
+      <div className="flex flex-col gap-4 border-b pb-6 sm:flex-row sm:items-center sm:justify-between">
+        <div className="space-y-1">
+          <Link
+            to="/instructor"
+            className="text-xs text-muted-foreground hover:underline inline-block mb-1"
+          >
+            ← Back to Courses
+          </Link>
+          <div className="flex items-center gap-3">
+            <h1 className="text-3xl font-bold tracking-tight">{course.title}</h1>
+            <Badge variant={course.isPublished ? "success" : "secondary"}>
+              {course.isPublished ? "Published" : "Draft"}
+            </Badge>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            {course.description || "No description provided."}
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button variant="outline" size="sm" onClick={() => setIsCourseModalOpen(true)}>
+            Edit Details
+          </Button>
+          <Button
+            variant={course.isPublished ? "outline" : "default"}
+            size="sm"
+            onClick={handleTogglePublish}
+          >
+            {course.isPublished ? "Unpublish Course" : "Publish Course"}
+          </Button>
+          <Button variant="destructive" size="sm" onClick={handleDeleteCourse}>
+            Delete Course
+          </Button>
+        </div>
+      </div>
+
+      {/* Curriculum Modules Section */}
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-xl font-semibold tracking-tight">Curriculum Structure</h2>
+            <p className="text-xs text-muted-foreground">
+              Add modules and lessons to build your course content.
+            </p>
+          </div>
+          <Button size="sm" onClick={openCreateModule}>
+            + Add Module
+          </Button>
+        </div>
+
+        {course.modules.length === 0 ? (
+          <Card className="text-center p-8 border-dashed">
+            <CardHeader>
+              <CardTitle className="text-lg">No modules added</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground mb-4">
+                Divide your course into structured chapters or modules.
+              </p>
+              <Button size="sm" onClick={openCreateModule}>
+                Create First Module
+              </Button>
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="space-y-6">
+            {course.modules.map((mod, modIdx) => (
+              <Card key={mod.id} className="border">
+                <CardHeader className="bg-muted/40 py-3 px-4 flex flex-row items-center justify-between space-y-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Module {modIdx + 1}
+                    </span>
+                    <h3 className="font-semibold text-base">{mod.title}</h3>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => openCreateLesson(mod.id)}
+                    >
+                      + Add Lesson
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => openEditModule(mod)}
+                    >
+                      Rename
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-destructive hover:text-destructive"
+                      onClick={() => handleDeleteModule(mod.id)}
+                    >
+                      Delete
+                    </Button>
+                  </div>
+                </CardHeader>
+
+                <CardContent className="p-4 space-y-2">
+                  {mod.lessons.length === 0 ? (
+                    <p className="text-xs text-muted-foreground py-2 italic">
+                      No lessons in this module. Click "+ Add Lesson" above.
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      {mod.lessons.map((lesson, lessIdx) => (
+                        <div
+                          key={lesson.id}
+                          className="flex items-center justify-between p-3 rounded-md border bg-card hover:bg-muted/20 transition-colors"
+                        >
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-mono text-muted-foreground">
+                                {modIdx + 1}.{lessIdx + 1}
+                              </span>
+                              <Badge
+                                variant={lesson.type === "VIDEO" ? "default" : "secondary"}
+                                className="text-[10px] px-1.5 py-0"
+                              >
+                                {lesson.type}
+                              </Badge>
+                              <span className="text-sm font-medium">{lesson.title}</span>
+                              {lesson.level && (
+                                <span className="text-xs text-muted-foreground border rounded px-1.5 py-0.5">
+                                  {lesson.level}
+                                </span>
+                              )}
+                            </div>
+
+                            {lesson.type === "VIDEO" && lesson.videoUrl && (
+                              <p className="text-xs text-muted-foreground truncate max-w-md">
+                                Embed URL: {lesson.videoUrl}
+                              </p>
+                            )}
+
+                            {lesson.type === "TEXT" && lesson.content && (
+                              <p className="text-xs text-muted-foreground line-clamp-1 max-w-md">
+                                {lesson.content}
+                              </p>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-1">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => openEditLesson(mod.id, lesson)}
+                            >
+                              Edit
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-destructive hover:text-destructive"
+                              onClick={() => handleDeleteLesson(lesson.id)}
+                            >
+                              Delete
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Edit Course Details Modal */}
+      <Dialog open={isCourseModalOpen} onClose={() => setIsCourseModalOpen(false)}>
+        <DialogHeader>
+          <DialogTitle>Edit Course Details</DialogTitle>
+          <DialogDescription>Update the title and description for this course.</DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleUpdateCourseDetails} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="c-title">Course Title</Label>
+            <Input
+              id="c-title"
+              value={courseTitle}
+              onChange={(e) => setCourseTitle(e.target.value)}
+              required
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="c-desc">Description</Label>
+            <Textarea
+              id="c-desc"
+              value={courseDesc}
+              onChange={(e) => setCourseDesc(e.target.value)}
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setIsCourseModalOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button type="submit">Save Changes</Button>
+          </DialogFooter>
+        </form>
+      </Dialog>
+
+      {/* Add / Edit Module Modal */}
+      <Dialog open={isModuleModalOpen} onClose={() => setIsModuleModalOpen(false)}>
+        <DialogHeader>
+          <DialogTitle>{editingModule ? "Edit Module" : "Add Module"}</DialogTitle>
+          <DialogDescription>
+            {editingModule
+              ? "Rename this module in your curriculum."
+              : "Create a new chapter or module for your course."}
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSaveModule} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="m-title">Module Title</Label>
+            <Input
+              id="m-title"
+              placeholder="e.g. Getting Started"
+              value={moduleTitle}
+              onChange={(e) => setModuleTitle(e.target.value)}
+              required
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setIsModuleModalOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button type="submit">{editingModule ? "Save" : "Add Module"}</Button>
+          </DialogFooter>
+        </form>
+      </Dialog>
+
+      {/* Add / Edit Lesson Modal */}
+      <Dialog open={isLessonModalOpen} onClose={() => setIsLessonModalOpen(false)}>
+        <DialogHeader>
+          <DialogTitle>{editingLesson ? "Edit Lesson" : "Add Lesson"}</DialogTitle>
+          <DialogDescription>
+            Create text or video lesson content with YouTube support.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSaveLesson} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="l-title">Lesson Title</Label>
+            <Input
+              id="l-title"
+              placeholder="e.g. Component Architecture"
+              value={lessonTitle}
+              onChange={(e) => setLessonTitle(e.target.value)}
+              required
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label>Lesson Format</Label>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant={lessonType === "TEXT" ? "default" : "outline"}
+                size="sm"
+                className="flex-1"
+                onClick={() => setLessonType("TEXT")}
+              >
+                Text Article
+              </Button>
+              <Button
+                type="button"
+                variant={lessonType === "VIDEO" ? "default" : "outline"}
+                size="sm"
+                className="flex-1"
+                onClick={() => setLessonType("VIDEO")}
+              >
+                Video Lesson
+              </Button>
+            </div>
+          </div>
+
+          {lessonType === "VIDEO" ? (
+            <div className="space-y-2">
+              <Label htmlFor="l-url">YouTube Video URL</Label>
+              <Input
+                id="l-url"
+                placeholder="https://www.youtube.com/watch?v=..."
+                value={lessonVideoUrl}
+                onChange={(e) => setLessonVideoUrl(e.target.value)}
+                required={lessonType === "VIDEO"}
+              />
+              <p className="text-xs text-muted-foreground">
+                Paste any standard YouTube watch link or embed link; it will be automatically converted to an embed player.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <Label htmlFor="l-content">Lesson Content</Label>
+              <Textarea
+                id="l-content"
+                rows={5}
+                placeholder="Write lesson notes, markdown, or instructions..."
+                value={lessonContent}
+                onChange={(e) => setLessonContent(e.target.value)}
+              />
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="l-level">Level</Label>
+              <Input
+                id="l-level"
+                placeholder="Beginner, Advanced..."
+                value={lessonLevel}
+                onChange={(e) => setLessonLevel(e.target.value)}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="l-keywords">Keywords</Label>
+              <Input
+                id="l-keywords"
+                placeholder="react, jsx, hooks"
+                value={lessonKeywords}
+                onChange={(e) => setLessonKeywords(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setIsLessonModalOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button type="submit">{editingLesson ? "Save Changes" : "Create Lesson"}</Button>
+          </DialogFooter>
+        </form>
+      </Dialog>
+    </div>
+  )
+}
