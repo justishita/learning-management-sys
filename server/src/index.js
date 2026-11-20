@@ -5,6 +5,7 @@ import path from "path"
 import { fileURLToPath } from "url"
 import dotenv from "dotenv"
 import authRouter from "./routes/auth.js"
+import { requireAuth } from "./middleware/auth.js"
 
 dotenv.config()
 
@@ -30,6 +31,10 @@ app.get("/api/health", (req, res) => {
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
   })
+})
+
+app.get("/api/me", requireAuth, (req, res) => {
+  res.json({ user: req.user })
 })
 
 app.use("/api/auth", authRouter)
