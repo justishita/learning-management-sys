@@ -1,7 +1,11 @@
 import { Router } from "express"
 import prisma from "../db.js"
 import { requireAuth, requireRole } from "../middleware/auth.js"
-import { createQuizSchema, submitQuizSchema } from "../schemas/quiz.js"
+import {
+  createQuizSchema,
+  submitQuizSchema,
+  autosaveAnswersSchema,
+} from "../schemas/quiz.js"
 
 const router = Router()
 
@@ -10,8 +14,10 @@ async function gradeAttempt(attempt, questions, answers, submittedTime) {
   let correctCount = 0
   const total = questions.length
 
+  const finalAnswers = answers || attempt.answers || {}
+
   for (const q of questions) {
-    const studentAnswer = answers?.[q.id]
+    const studentAnswer = finalAnswers[q.id]
     if (studentAnswer !== undefined && studentAnswer === q.correctIndex) {
       correctCount++
     }
@@ -23,7 +29,7 @@ async function gradeAttempt(attempt, questions, answers, submittedTime) {
     where: { id: attempt.id },
     data: {
       score,
-      answers: answers || attempt.answers || {},
+      answers: finalAnswers,
       submittedAt: submittedTime,
     },
   })
@@ -189,7 +195,7 @@ router.delete(
 // STUDENT ROUTES
 // -------------------------------------------------------------
 
-// Get quiz for student
+// Get quiz for student (lazily grades if expired, never sends correctIndex before submittedAt)
 router.get("/quizzes/:id", requireAuth, async (req, res) => {
   try {
     const quiz = await prisma.quiz.findUnique({
@@ -308,7 +314,9 @@ router.get("/quizzes/:id", requireAuth, async (req, res) => {
   }
 })
 
-// Start quiz attempt (enforces 1 attempt per student, sets server-side expiresAt)
+// Start quiz attempt:
+// Creates attempt with expiresAt = now + timeLimit and returns questions without correctIndex.
+// Starting again after an attempt exists returns the existing attempt, never a new one.
 router.post("/quizzes/:id/start", requireAuth, async (req, res) => {
   try {
     const quiz = await prisma.quiz.findUnique({
@@ -341,8 +349,8 @@ router.post("/quizzes/:id/start", requireAuth, async (req, res) => {
       return res.status(403).json({ error: "Must be enrolled to take this quiz" })
     }
 
-    // Rule: one attempt per student (UNIQUE userId+quizId)
-    const existing = await prisma.quizAttempt.findUnique({
+    // Check if attempt already exists
+    let attempt = await prisma.quizAttempt.findUnique({
       where: {
         userId_quizId: {
           userId: req.user.id,
@@ -351,26 +359,62 @@ router.post("/quizzes/:id/start", requireAuth, async (req, res) => {
       },
     })
 
-    if (existing) {
-      return res.status(400).json({
-        error: "You have already started or completed your one attempt for this quiz",
-        attempt: existing,
+    // If attempt exists, return it (never create a new one)
+    if (attempt) {
+      // Lazy grading check if expired
+      if (!attempt.submittedAt && new Date() > attempt.expiresAt) {
+        attempt = await gradeAttempt(
+          attempt,
+          quiz.questions,
+          attempt.answers,
+          attempt.expiresAt
+        )
+      }
+
+      const isSubmitted = Boolean(attempt.submittedAt)
+      const questionsForStudent = quiz.questions.map((q) => {
+        const item = {
+          id: q.id,
+          prompt: q.prompt,
+          options: q.options,
+          position: q.position,
+        }
+        if (isSubmitted) {
+          item.correctIndex = q.correctIndex
+        }
+        return item
+      })
+
+      return res.json({
+        attempt: {
+          id: attempt.id,
+          startedAt: attempt.startedAt,
+          expiresAt: attempt.expiresAt,
+          submittedAt: attempt.submittedAt,
+          score: attempt.score,
+          passed: attempt.score !== null ? attempt.score >= quiz.passMark : null,
+          answers: attempt.answers || {},
+        },
+        questions: questionsForStudent,
       })
     }
 
+    // Create fresh attempt: expiresAt = now + timeLimitMin * 60s
     const durationMinutes = quiz.timeLimitMin || 10
     const startedAt = new Date()
     const expiresAt = new Date(startedAt.getTime() + durationMinutes * 60 * 1000)
 
-    const attempt = await prisma.quizAttempt.create({
+    attempt = await prisma.quizAttempt.create({
       data: {
         userId: req.user.id,
         quizId: quiz.id,
         startedAt,
         expiresAt,
+        answers: {},
       },
     })
 
+    // Questions without correctIndex
     const questionsWithoutAnswers = quiz.questions.map((q) => ({
       id: q.id,
       prompt: q.prompt,
@@ -385,6 +429,7 @@ router.post("/quizzes/:id/start", requireAuth, async (req, res) => {
         expiresAt: attempt.expiresAt,
         submittedAt: attempt.submittedAt,
         score: attempt.score,
+        passed: null,
         answers: {},
       },
       questions: questionsWithoutAnswers,
@@ -395,10 +440,10 @@ router.post("/quizzes/:id/start", requireAuth, async (req, res) => {
   }
 })
 
-// Submit quiz answers
-router.post("/quizzes/:id/submit", requireAuth, async (req, res) => {
+// Autosave answers via PATCH
+router.patch("/quizzes/:id/answers", requireAuth, async (req, res) => {
   try {
-    const parseResult = submitQuizSchema.safeParse(req.body)
+    const parseResult = autosaveAnswersSchema.safeParse(req.body)
     if (!parseResult.success) {
       return res.status(400).json({
         error: "Validation failed",
@@ -421,7 +466,90 @@ router.post("/quizzes/:id/submit", requireAuth, async (req, res) => {
       return res.status(404).json({ error: "Quiz not found" })
     }
 
-    const attempt = await prisma.quizAttempt.findUnique({
+    let attempt = await prisma.quizAttempt.findUnique({
+      where: {
+        userId_quizId: {
+          userId: req.user.id,
+          quizId: quiz.id,
+        },
+      },
+    })
+
+    if (!attempt) {
+      return res.status(400).json({ error: "No active attempt found" })
+    }
+
+    // If already submitted, cannot modify
+    if (attempt.submittedAt) {
+      return res.status(400).json({
+        error: "Attempt is already submitted",
+        attempt,
+      })
+    }
+
+    const now = new Date()
+
+    // Lazy grading if expired
+    if (now > attempt.expiresAt) {
+      const mergedAnswers = { ...(attempt.answers || {}), ...answers }
+      const graded = await gradeAttempt(
+        attempt,
+        quiz.questions,
+        mergedAnswers,
+        attempt.expiresAt
+      )
+      return res.json({
+        isExpired: true,
+        attempt: {
+          ...graded,
+          passed: graded.score >= quiz.passMark,
+        },
+        questions: quiz.questions,
+      })
+    }
+
+    // Not expired: save answers
+    const mergedAnswers = { ...(attempt.answers || {}), ...answers }
+    const updated = await prisma.quizAttempt.update({
+      where: { id: attempt.id },
+      data: { answers: mergedAnswers },
+    })
+
+    return res.json({
+      success: true,
+      answers: updated.answers,
+    })
+  } catch (err) {
+    console.error("Autosave answers error:", err)
+    return res.status(500).json({ error: "Failed to autosave answers" })
+  }
+})
+
+// Submit quiz answers
+router.post("/quizzes/:id/submit", requireAuth, async (req, res) => {
+  try {
+    const parseResult = submitQuizSchema.safeParse(req.body)
+    if (!parseResult.success) {
+      return res.status(400).json({
+        error: "Validation failed",
+        details: parseResult.error.flatten().fieldErrors,
+      })
+    }
+
+    const quiz = await prisma.quiz.findUnique({
+      where: { id: req.params.id },
+      include: {
+        questions: {
+          orderBy: { position: "asc" },
+        },
+      },
+    })
+
+    if (!quiz) {
+      return res.status(404).json({ error: "Quiz not found" })
+    }
+
+    let attempt = await prisma.quizAttempt.findUnique({
       where: {
         userId_quizId: {
           userId: req.user.id,
@@ -434,10 +562,14 @@ router.post("/quizzes/:id/submit", requireAuth, async (req, res) => {
       return res.status(400).json({ error: "No active attempt found. Start the quiz first." })
     }
 
+    // If already submitted, return the graded attempt with questions and correctIndex
     if (attempt.submittedAt) {
-      return res.status(400).json({
-        error: "This attempt has already been submitted and graded",
-        attempt,
+      return res.json({
+        attempt: {
+          ...attempt,
+          passed: attempt.score !== null ? attempt.score >= quiz.passMark : null,
+        },
+        questions: quiz.questions,
       })
     }
 
@@ -445,10 +577,14 @@ router.post("/quizzes/:id/submit", requireAuth, async (req, res) => {
     const isExpired = now > attempt.expiresAt
     const submissionTime = isExpired ? attempt.expiresAt : now
 
+    const submittedAnswers = parseResult.data.answers
+      ? { ...(attempt.answers || {}), ...parseResult.data.answers }
+      : attempt.answers || {}
+
     const updatedAttempt = await gradeAttempt(
       attempt,
       quiz.questions,
-      answers,
+      submittedAnswers,
       submissionTime
     )
 

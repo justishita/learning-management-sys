@@ -20,6 +20,10 @@ export const createQuizSchema = z.object({
   questions: z.array(questionSchema).min(1, "Quiz must contain at least 1 question"),
 })
 
+export const autosaveAnswersSchema = z.object({
+  answers: z.record(z.string(), z.number().int().min(0).max(3)),
+})
+
 export const submitQuizSchema = z.object({
-  answers: z.record(z.string(), z.number().int().min(0)),
+  answers: z.record(z.string(), z.number().int().min(0).max(3)).optional(),
 })

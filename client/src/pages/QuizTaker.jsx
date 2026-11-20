@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useParams, Link } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -12,8 +12,11 @@ export default function QuizTaker() {
   const [answers, setAnswers] = useState({})
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
+  const [saveStatus, setSaveStatus] = useState("idle") // "idle" | "saving" | "saved" | "error"
   const [timeLeft, setTimeLeft] = useState(null)
   const [error, setError] = useState("")
+
+  const autosaveTimeoutRef = useRef(null)
 
   const fetchQuiz = async () => {
     try {
@@ -40,7 +43,7 @@ export default function QuizTaker() {
     fetchQuiz()
   }, [quizId])
 
-  // Timer countdown
+  // Display countdown timer (Server is the authority)
   useEffect(() => {
     if (!attempt || attempt.submittedAt || !attempt.expiresAt) return
 
@@ -51,8 +54,8 @@ export default function QuizTaker() {
       )
       setTimeLeft(remainingSec)
 
-      if (remainingSec <= 0) {
-        // Auto submit on time expiry
+      // When local display hits 0, trigger submit to trigger server lazy grade
+      if (remainingSec <= 0 && !submitting) {
         handleSubmit(true)
       }
     }
@@ -60,7 +63,7 @@ export default function QuizTaker() {
     calculateRemaining()
     const timer = setInterval(calculateRemaining, 1000)
     return () => clearInterval(timer)
-  }, [attempt])
+  }, [attempt, submitting])
 
   const handleStartQuiz = async () => {
     try {
@@ -76,6 +79,9 @@ export default function QuizTaker() {
       const data = await res.json()
       setAttempt(data.attempt)
       setQuiz((prev) => ({ ...prev, questions: data.questions }))
+      if (data.attempt?.answers) {
+        setAnswers(data.attempt.answers)
+      }
     } catch (err) {
       alert(err.message)
     } finally {
@@ -83,14 +89,58 @@ export default function QuizTaker() {
     }
   }
 
+  // Autosave via PATCH /api/quizzes/:id/answers
+  const triggerAutosave = (newAnswers) => {
+    if (autosaveTimeoutRef.current) {
+      clearTimeout(autosaveTimeoutRef.current)
+    }
+
+    setSaveStatus("saving")
+
+    autosaveTimeoutRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/quizzes/${quizId}/answers`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ answers: newAnswers }),
+        })
+
+        const data = await res.json()
+
+        // If the server detected expiration during save
+        if (data.isExpired && data.attempt) {
+          setAttempt(data.attempt)
+          if (data.questions) {
+            setQuiz((prev) => ({ ...prev, questions: data.questions }))
+          }
+          setSaveStatus("idle")
+          return
+        }
+
+        if (res.ok) {
+          setSaveStatus("saved")
+        } else {
+          setSaveStatus("error")
+        }
+      } catch (err) {
+        console.error("Autosave error:", err)
+        setSaveStatus("error")
+      }
+    }, 400)
+  }
+
   const handleSelectOption = (questionId, optionIdx) => {
     if (attempt?.submittedAt) return
-    setAnswers((prev) => ({ ...prev, [questionId]: optionIdx }))
+
+    const updated = { ...answers, [questionId]: optionIdx }
+    setAnswers(updated)
+    triggerAutosave(updated)
   }
 
   const handleSubmit = async (isAuto = false) => {
     if (submitting) return
-    if (!isAuto && !window.confirm("Submit your answers now? You only have one attempt.")) {
+    if (!isAuto && !window.confirm("Submit your answers now? This will complete your single attempt.")) {
       return
     }
 
@@ -145,11 +195,13 @@ export default function QuizTaker() {
   }
 
   const isSubmitted = Boolean(attempt?.submittedAt)
+  const passMark = quiz.passMark ?? 70
+  const isPassed = attempt?.score !== null && attempt?.score >= passMark
 
   return (
     <div className="container mx-auto p-6 max-w-3xl space-y-6">
       {/* Top Header */}
-      <div className="flex items-center justify-between border-b pb-4">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b pb-4 gap-3">
         <div>
           <Link
             to={`/courses/${quiz.courseId}`}
@@ -161,23 +213,33 @@ export default function QuizTaker() {
         </div>
 
         {attempt && !isSubmitted && (
-          <div className="flex items-center gap-2 bg-muted px-3 py-1.5 rounded-md font-mono text-sm font-semibold">
-            <span className="text-muted-foreground text-xs">Time Left:</span>
-            <span className={timeLeft < 60 ? "text-destructive font-bold" : ""}>
-              {formatTimer(timeLeft)}
+          <div className="flex items-center gap-3 self-end sm:self-auto">
+            {/* Autosave status indicator */}
+            <span className="text-xs text-muted-foreground">
+              {saveStatus === "saving" && "Saving answers..."}
+              {saveStatus === "saved" && "✓ Answers saved"}
+              {saveStatus === "error" && "Error saving"}
             </span>
+
+            {/* Server-authoritative timer display */}
+            <div className="flex items-center gap-2 bg-muted px-3 py-1.5 rounded-md font-mono text-sm font-semibold">
+              <span className="text-muted-foreground text-xs">Time Left:</span>
+              <span className={timeLeft !== null && timeLeft < 60 ? "text-destructive font-bold animate-pulse" : ""}>
+                {formatTimer(timeLeft)}
+              </span>
+            </div>
           </div>
         )}
       </div>
 
       {!attempt ? (
-        // Start Attempt View
+        // Start Attempt Screen
         <Card className="text-center p-8 space-y-4">
           <CardHeader>
-            <CardTitle className="text-xl">Ready for this Quiz?</CardTitle>
+            <CardTitle className="text-xl">Begin Module Assessment</CardTitle>
             <CardDescription className="max-w-md mx-auto">
-              This module assessment has {quiz.questions.length} questions. You only get{" "}
-              <strong>one attempt</strong>.
+              This quiz consists of {quiz.questions.length} multiple-choice questions. You have exactly{" "}
+              <strong>one attempt</strong>. Answers will autosave as you work.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4 max-w-sm mx-auto">
@@ -187,62 +249,69 @@ export default function QuizTaker() {
                 <span className="text-base font-semibold">{quiz.timeLimitMin || 10} min</span>
               </div>
               <div className="rounded-md border p-3 bg-muted/30">
-                <span className="text-muted-foreground block mb-0.5">Passing Mark</span>
-                <span className="text-base font-semibold">{quiz.passMark || 70}%</span>
+                <span className="text-muted-foreground block mb-0.5">Pass Mark</span>
+                <span className="text-base font-semibold">{passMark}%</span>
               </div>
             </div>
 
             <Button size="lg" onClick={handleStartQuiz} disabled={submitting} className="w-full">
-              {submitting ? "Starting..." : "Begin Quiz Attempt"}
+              {submitting ? "Starting..." : "Start Quiz Attempt"}
             </Button>
           </CardContent>
         </Card>
       ) : isSubmitted ? (
-        // Result Summary & Review View
+        // Graded Result & Comprehensive Review Screen
         <div className="space-y-6">
           <Card
             className={`border ${
-              attempt.score >= (quiz.passMark || 70)
+              isPassed
                 ? "border-emerald-600/30 bg-emerald-500/5"
                 : "border-destructive/30 bg-destructive/5"
             }`}
           >
             <CardHeader className="text-center pb-2">
-              <Badge
-                variant={attempt.score >= (quiz.passMark || 70) ? "success" : "destructive"}
-                className="mx-auto mb-2 text-xs"
-              >
-                {attempt.score >= (quiz.passMark || 70) ? "Passed" : "Did Not Pass"}
-              </Badge>
+              <div className="flex justify-center mb-2">
+                <Badge
+                  variant={isPassed ? "success" : "destructive"}
+                  className="text-xs px-3 py-0.5"
+                >
+                  {isPassed ? "PASSED" : "DID NOT PASS"}
+                </Badge>
+              </div>
               <CardTitle
-                className={`text-3xl font-bold ${
-                  attempt.score >= (quiz.passMark || 70)
-                    ? "text-emerald-600"
-                    : "text-destructive"
+                className={`text-4xl font-extrabold ${
+                  isPassed ? "text-emerald-600" : "text-destructive"
                 }`}
               >
-                Score: {attempt.score}%
+                {attempt.score}%
               </CardTitle>
-              <CardDescription>
-                Pass Mark: {quiz.passMark || 70}% • Submitted on{" "}
+              <CardDescription className="mt-1">
+                Pass Mark Requirement: {passMark}% • Completed on{" "}
                 {new Date(attempt.submittedAt).toLocaleTimeString()}
               </CardDescription>
             </CardHeader>
+
             <CardFooter className="justify-center pt-2">
               <Link to={`/courses/${quiz.courseId}`}>
                 <Button variant="outline" size="sm">
-                  Return to Course
+                  Return to Course Overview
                 </Button>
               </Link>
             </CardFooter>
           </Card>
 
-          {/* Question Review with correct answers revealed */}
+          {/* Question Review Section */}
           <div className="space-y-4">
-            <h2 className="text-lg font-semibold tracking-tight">Question Review</h2>
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-bold tracking-tight">Answers & Explanations</h2>
+              <span className="text-xs text-muted-foreground">
+                {quiz.questions.length} Questions Reviewed
+              </span>
+            </div>
+
             {quiz.questions.map((q, idx) => {
               const studentAnswer = attempt.answers?.[q.id]
-              const isCorrect = studentAnswer === q.correctIndex
+              const isCorrect = studentAnswer !== undefined && studentAnswer === q.correctIndex
 
               return (
                 <Card
@@ -251,38 +320,44 @@ export default function QuizTaker() {
                     isCorrect ? "border-emerald-500/30" : "border-destructive/30"
                   }`}
                 >
-                  <CardHeader className="py-3 px-4">
+                  <CardHeader className="py-3 px-4 bg-muted/20">
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-xs font-semibold text-muted-foreground uppercase">
                         Question {idx + 1}
                       </span>
-                      <Badge variant={isCorrect ? "success" : "destructive"}>
+                      <Badge variant={isCorrect ? "success" : "destructive"} className="text-xs">
                         {isCorrect ? "Correct" : "Incorrect"}
                       </Badge>
                     </div>
                     <CardTitle className="text-base mt-1">{q.prompt}</CardTitle>
                   </CardHeader>
 
-                  <CardContent className="px-4 pb-4 space-y-2">
+                  <CardContent className="p-4 space-y-2">
                     {q.options.map((opt, optIdx) => {
                       const isChosen = studentAnswer === optIdx
-                      const isRightOption = q.correctIndex === optIdx
+                      const isRight = q.correctIndex === optIdx
 
                       return (
                         <div
                           key={optIdx}
-                          className={`p-2.5 rounded-md text-sm border flex items-center justify-between ${
-                            isRightOption
-                              ? "bg-emerald-500/15 border-emerald-500/50 font-medium"
+                          className={`p-3 rounded-md text-sm border flex items-center justify-between transition-colors ${
+                            isRight
+                              ? "bg-emerald-500/15 border-emerald-500/60 font-medium text-foreground"
                               : isChosen
-                              ? "bg-destructive/15 border-destructive/50"
-                              : "bg-card text-muted-foreground"
+                              ? "bg-destructive/15 border-destructive/50 text-destructive"
+                              : "bg-card text-muted-foreground opacity-80"
                           }`}
                         >
-                          <span>{opt}</span>
-                          <span className="text-xs">
-                            {isRightOption && "✓ Correct Answer"}
-                            {isChosen && !isRightOption && "✗ Your Answer"}
+                          <div className="flex items-center gap-2.5">
+                            <span className="w-5 h-5 rounded-full border flex items-center justify-center text-xs font-mono font-bold">
+                              {String.fromCharCode(65 + optIdx)}
+                            </span>
+                            <span>{opt}</span>
+                          </div>
+
+                          <span className="text-xs font-semibold">
+                            {isRight && "✓ Correct"}
+                            {isChosen && !isRight && "✗ Your Pick"}
                           </span>
                         </div>
                       )
@@ -294,17 +369,17 @@ export default function QuizTaker() {
           </div>
         </div>
       ) : (
-        // Active Attempt Taker View
+        // Active Quiz Taker (Timer Running, Autosaving)
         <div className="space-y-6">
           {quiz.questions.map((q, idx) => (
-            <Card key={q.id}>
-              <CardHeader className="py-3 px-4">
+            <Card key={q.id} className="border">
+              <CardHeader className="py-3 px-4 bg-muted/20">
                 <span className="text-xs font-semibold text-muted-foreground uppercase">
                   Question {idx + 1} of {quiz.questions.length}
                 </span>
                 <CardTitle className="text-base mt-1">{q.prompt}</CardTitle>
               </CardHeader>
-              <CardContent className="px-4 pb-4 space-y-2">
+              <CardContent className="p-4 space-y-2.5">
                 {q.options.map((opt, optIdx) => {
                   const isSelected = answers[q.id] === optIdx
                   return (
@@ -314,14 +389,15 @@ export default function QuizTaker() {
                       onClick={() => handleSelectOption(q.id, optIdx)}
                       className={`w-full text-left p-3 rounded-md border text-sm transition-all flex items-center gap-3 ${
                         isSelected
-                          ? "bg-primary text-primary-foreground border-primary"
-                          : "bg-card hover:bg-muted/50"
+                          ? "bg-primary text-primary-foreground border-primary shadow-xs"
+                          : "bg-card hover:bg-muted/40 text-foreground"
                       }`}
                     >
-                      <span className="w-5 h-5 rounded-full border flex items-center justify-center text-xs">
+                      <span className="w-5 h-5 rounded-full border flex items-center justify-center text-xs font-mono font-bold">
                         {String.fromCharCode(65 + optIdx)}
                       </span>
-                      <span>{opt}</span>
+                      <span className="flex-1">{opt}</span>
+                      {isSelected && <span className="text-xs">Selected</span>}
                     </button>
                   )
                 })}
@@ -329,11 +405,16 @@ export default function QuizTaker() {
             </Card>
           ))}
 
-          <div className="flex justify-end pt-4">
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-4 border-t">
+            <span className="text-xs text-muted-foreground">
+              {Object.keys(answers).length} of {quiz.questions.length} answered • Answers autosaved
+            </span>
+
             <Button
               size="lg"
               onClick={() => handleSubmit(false)}
               disabled={submitting}
+              className="w-full sm:w-auto"
             >
               {submitting ? "Submitting..." : "Submit Quiz"}
             </Button>
