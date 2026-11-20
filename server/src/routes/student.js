@@ -557,11 +557,20 @@ router.post("/lessons/:id/tutor", requireAuth, async (req, res) => {
       return res.status(403).json({ error: "Must be enrolled to use the AI Tutor" })
     }
 
-    // Ground truth: use cached Lesson.aiContext for video lessons, content for text lessons
+    // Ground truth: use aiContext for video lessons. Block if empty.
+    if (lesson.type === "VIDEO") {
+      if (!lesson.aiContext || !lesson.aiContext.trim()) {
+        return res.status(400).json({
+          error:
+            "This video lesson does not have reference notes configured yet. The instructor needs to generate notes before the AI Tutor can evaluate explanations.",
+        })
+      }
+    }
+
     const groundTruth =
       lesson.type === "VIDEO"
-        ? (lesson.aiContext || lesson.content || `Video Lesson: ${lesson.title}`)
-        : (lesson.content || `Text Lesson: ${lesson.title}`)
+        ? lesson.aiContext.trim()
+        : (lesson.content?.trim() || `Text Lesson: ${lesson.title}`)
 
     // 4. Call Gemini in JSON mode (sends ONLY groundTruth and explanation; NO personal data)
     const feedback = await callGeminiTutor(groundTruth, explanation)

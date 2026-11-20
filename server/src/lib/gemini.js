@@ -181,6 +181,85 @@ Instructions:
   return JSON.parse(candidateText)
 }
 
+export async function generateReferenceNotes({ title, topic, keywords, level }) {
+  const apiKey = process.env.GEMINI_API_KEY
+  const model = process.env.GEMINI_MODEL || "gemini-2.5-flash"
+
+  const keywordStr = Array.isArray(keywords)
+    ? keywords.join(", ")
+    : (keywords || "None specified")
+  const topicStr = topic || title
+  const levelStr = level || "All Levels"
+
+  if (!apiKey || apiKey.includes("replace-with")) {
+    return `# Reference Notes: ${title}
+
+## Overview
+- **Topic**: ${topicStr}
+- **Level**: ${levelStr}
+- **Keywords**: ${keywordStr}
+
+### Core Concepts & Key Objectives
+1. **Foundations**: Comprehensive understanding of ${topicStr}.
+2. **Key Terminology**: Fundamental definitions and conventions around ${keywordStr}.
+3. **Core Mechanics**: Underlying mechanisms and workflow steps.
+
+### Detailed Technical Breakdown
+- **Implementation**: Structured patterns and recommended best practices.
+- **Common Mistakes & Edge Cases**: Common misconceptions and debugging patterns.
+
+### Key Takeaways
+- Mastery of foundational concepts in ${title} enables effective problem-solving and clean implementation.`
+  }
+
+  const promptText = `
+You are an expert instructor creating comprehensive reference notes for a video lesson.
+These notes will be the SOLE source of ground truth for an AI Tutor that evaluates student explanations and tests student comprehension.
+
+Lesson Title: ${title}
+Topic: ${topicStr}
+Level: ${levelStr}
+Keywords: ${keywordStr}
+
+Instructions:
+1. Provide structured, high-quality reference notes in clear Markdown format.
+2. Structure the notes with:
+   - Overview & Objectives
+   - Core Concepts and Definitions
+   - Detailed Technical Breakdown (with code or examples if relevant)
+   - Common Pitfalls & Edge Cases
+   - Key Takeaways & Summary
+3. Make sure all key concepts related to the topic and keywords are clearly and unambiguously articulated so that the AI Tutor has complete factual ground truth.
+`
+
+  const url = `${GEMINI_API_BASE}/${model}:generateContent?key=${apiKey}`
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: promptText }] }],
+      generationConfig: {
+        temperature: 0.3,
+      },
+    }),
+  })
+
+  if (!response.ok) {
+    const errorBody = await response.text()
+    throw new Error(`Gemini API error (${response.status}): ${errorBody}`)
+  }
+
+  const data = await response.json()
+  const candidateText = data.candidates?.[0]?.content?.parts?.[0]?.text
+
+  if (!candidateText) {
+    throw new Error("Empty response from Gemini API for reference notes")
+  }
+
+  return candidateText.trim()
+}
+
 export async function callGeminiTutor(groundTruth, explanation) {
   let lastError = null
 

@@ -8,8 +8,10 @@ import {
   updateModuleSchema,
   createLessonSchema,
   updateLessonSchema,
+  generateNotesSchema,
   formatYoutubeEmbedUrl,
 } from "../schemas/instructor.js"
+import { generateReferenceNotes } from "../lib/gemini.js"
 
 const router = Router()
 
@@ -477,6 +479,33 @@ router.delete("/modules/:id", async (req, res) => {
 // LESSON ROUTES
 // -------------------------------------------------------------
 
+// Generate reference notes for a video lesson using Gemini
+router.post("/lessons/generate-notes", async (req, res) => {
+  try {
+    const parseResult = generateNotesSchema.safeParse(req.body)
+    if (!parseResult.success) {
+      return res.status(400).json({
+        error: "Validation failed",
+        details: parseResult.error.flatten().fieldErrors,
+      })
+    }
+
+    const { title, topic, keywords, level } = parseResult.data
+
+    const notes = await generateReferenceNotes({
+      title,
+      topic,
+      keywords,
+      level,
+    })
+
+    return res.json({ notes })
+  } catch (err) {
+    console.error("Generate notes error:", err)
+    return res.status(500).json({ error: err.message || "Failed to generate notes" })
+  }
+})
+
 // Create lesson under a module
 router.post("/modules/:moduleId/lessons", async (req, res) => {
   try {
@@ -504,6 +533,7 @@ router.post("/modules/:moduleId/lessons", async (req, res) => {
       type,
       content,
       videoUrl,
+      topic,
       level,
       keywords,
       aiContext,
@@ -527,6 +557,7 @@ router.post("/modules/:moduleId/lessons", async (req, res) => {
         type,
         content: content || null,
         videoUrl: formattedVideoUrl,
+        topic: topic || null,
         level: level || null,
         keywords: normalizeKeywords(keywords),
         aiContext: aiContext || null,

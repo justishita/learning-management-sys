@@ -49,6 +49,7 @@ export const createLessonSchema = z
     }),
     content: z.string().optional().nullable(),
     videoUrl: z.string().trim().optional().nullable(),
+    topic: z.string().trim().optional().nullable(),
     level: z.string().trim().optional().nullable(),
     keywords: z.union([z.array(z.string()), z.string()]).optional().nullable(),
     aiContext: z.string().optional().nullable(),
@@ -69,8 +70,16 @@ export const updateLessonSchema = z.object({
   type: z.enum(["TEXT", "VIDEO"]).optional(),
   content: z.string().optional().nullable(),
   videoUrl: z.string().trim().optional().nullable(),
+  topic: z.string().trim().optional().nullable(),
   level: z.string().trim().optional().nullable(),
   keywords: z.union([z.array(z.string()), z.string()]).optional().nullable(),
   aiContext: z.string().optional().nullable(),
   position: z.number().int().min(0).optional(),
+})
+
+export const generateNotesSchema = z.object({
+  title: z.string().trim().min(1, "Lesson title is required"),
+  topic: z.string().trim().optional().nullable(),
+  keywords: z.union([z.array(z.string()), z.string()]).optional().nullable(),
+  level: z.string().trim().optional().nullable(),
 })

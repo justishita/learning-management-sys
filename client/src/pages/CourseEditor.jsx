@@ -40,8 +40,12 @@ export default function CourseEditor() {
   const [lessonType, setLessonType] = useState("TEXT")
   const [lessonContent, setLessonContent] = useState("")
   const [lessonVideoUrl, setLessonVideoUrl] = useState("")
+  const [lessonTopic, setLessonTopic] = useState("")
   const [lessonLevel, setLessonLevel] = useState("Beginner")
   const [lessonKeywords, setLessonKeywords] = useState("")
+  const [lessonAiContext, setLessonAiContext] = useState("")
+  const [isGeneratingNotes, setIsGeneratingNotes] = useState(false)
+  const [generateNotesError, setGenerateNotesError] = useState(null)
 
   // Quiz Modal State
   const [isQuizModalOpen, setIsQuizModalOpen] = useState(false)
@@ -193,8 +197,11 @@ export default function CourseEditor() {
     setLessonType("TEXT")
     setLessonContent("")
     setLessonVideoUrl("")
+    setLessonTopic("")
     setLessonLevel("Beginner")
     setLessonKeywords("")
+    setLessonAiContext("")
+    setGenerateNotesError(null)
     setIsLessonModalOpen(true)
   }
 
@@ -205,9 +212,48 @@ export default function CourseEditor() {
     setLessonType(lesson.type)
     setLessonContent(lesson.content || "")
     setLessonVideoUrl(lesson.videoUrl || "")
+    setLessonTopic(lesson.topic || "")
     setLessonLevel(lesson.level || "Beginner")
     setLessonKeywords(Array.isArray(lesson.keywords) ? lesson.keywords.join(", ") : "")
+    setLessonAiContext(lesson.aiContext || "")
+    setGenerateNotesError(null)
     setIsLessonModalOpen(true)
+  }
+
+  const handleGenerateNotes = async () => {
+    if (!lessonTitle.trim()) {
+      alert("Please enter a lesson title before generating notes.")
+      return
+    }
+
+    try {
+      setIsGeneratingNotes(true)
+      setGenerateNotesError(null)
+      const res = await fetch("/api/instructor/lessons/generate-notes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          title: lessonTitle.trim(),
+          topic: lessonTopic.trim() || null,
+          keywords: lessonKeywords
+            ? lessonKeywords.split(",").map((k) => k.trim()).filter(Boolean)
+            : [],
+          level: lessonLevel.trim() || null,
+        }),
+      })
+
+      const data = await res.json()
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to generate reference notes")
+      }
+
+      setLessonAiContext(data.notes || "")
+    } catch (err) {
+      setGenerateNotesError(err.message)
+    } finally {
+      setIsGeneratingNotes(false)
+    }
   }
 
   const handleSaveLesson = async (e) => {
@@ -219,10 +265,12 @@ export default function CourseEditor() {
       type: lessonType,
       content: lessonType === "TEXT" ? lessonContent : null,
       videoUrl: lessonType === "VIDEO" ? lessonVideoUrl.trim() : null,
+      topic: lessonTopic.trim() || null,
       level: lessonLevel.trim() || null,
       keywords: lessonKeywords
         ? lessonKeywords.split(",").map((k) => k.trim()).filter(Boolean)
         : [],
+      aiContext: lessonType === "VIDEO" ? lessonAiContext.trim() || null : null,
     }
 
     try {
@@ -729,53 +777,129 @@ export default function CourseEditor() {
           </div>
 
           {lessonType === "VIDEO" ? (
-            <div className="space-y-2">
-              <Label htmlFor="l-url">YouTube Video URL</Label>
-              <Input
-                id="l-url"
-                placeholder="https://www.youtube.com/watch?v=..."
-                value={lessonVideoUrl}
-                onChange={(e) => setLessonVideoUrl(e.target.value)}
-                required={lessonType === "VIDEO"}
-              />
-              <p className="text-xs text-muted-foreground">
-                Paste any standard YouTube watch link or embed link; it will be automatically converted to an embed player.
-              </p>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="l-url">YouTube Video URL</Label>
+                <Input
+                  id="l-url"
+                  placeholder="https://www.youtube.com/watch?v=..."
+                  value={lessonVideoUrl}
+                  onChange={(e) => setLessonVideoUrl(e.target.value)}
+                  required={lessonType === "VIDEO"}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Paste any standard YouTube watch link or embed link; it will be automatically converted to an embed player.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="space-y-1">
+                  <Label htmlFor="l-topic" className="text-xs">Topic</Label>
+                  <Input
+                    id="l-topic"
+                    placeholder="e.g. Asynchronous JS"
+                    value={lessonTopic}
+                    onChange={(e) => setLessonTopic(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="l-level" className="text-xs">Level</Label>
+                  <Input
+                    id="l-level"
+                    placeholder="e.g. Intermediate"
+                    value={lessonLevel}
+                    onChange={(e) => setLessonLevel(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="l-keywords" className="text-xs">Keywords</Label>
+                  <Input
+                    id="l-keywords"
+                    placeholder="async, await, promise"
+                    value={lessonKeywords}
+                    onChange={(e) => setLessonKeywords(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-3 rounded-md border p-3 bg-muted/20">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="text-xs font-semibold">AI Tutor Reference Context</h4>
+                    <p className="text-[11px] text-muted-foreground">
+                      Reference notes serve as the ground truth for the AI Tutor.
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    onClick={handleGenerateNotes}
+                    disabled={isGeneratingNotes}
+                  >
+                    {isGeneratingNotes ? "Generating Notes..." : "✨ Generate Notes"}
+                  </Button>
+                </div>
+
+                {generateNotesError && (
+                  <p className="text-xs text-destructive">{generateNotesError}</p>
+                )}
+
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="l-aicontext" className="text-xs">
+                      Reference Notes (aiContext)
+                    </Label>
+                    <span className="text-[11px] text-muted-foreground">
+                      Editable — saving lesson approves these notes
+                    </span>
+                  </div>
+                  <Textarea
+                    id="l-aicontext"
+                    rows={6}
+                    placeholder="Click 'Generate Notes' or write reference notes explaining key concepts, definitions, and takeaways covered in the video..."
+                    value={lessonAiContext}
+                    onChange={(e) => setLessonAiContext(e.target.value)}
+                  />
+                </div>
+              </div>
             </div>
           ) : (
-            <div className="space-y-2">
-              <Label htmlFor="l-content">Lesson Content</Label>
-              <Textarea
-                id="l-content"
-                rows={5}
-                placeholder="Write lesson notes, markdown, or instructions..."
-                value={lessonContent}
-                onChange={(e) => setLessonContent(e.target.value)}
-              />
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="l-content">Lesson Content</Label>
+                <Textarea
+                  id="l-content"
+                  rows={5}
+                  placeholder="Write lesson notes, markdown, or instructions..."
+                  value={lessonContent}
+                  onChange={(e) => setLessonContent(e.target.value)}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="l-level">Level</Label>
+                  <Input
+                    id="l-level"
+                    placeholder="Beginner, Advanced..."
+                    value={lessonLevel}
+                    onChange={(e) => setLessonLevel(e.target.value)}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="l-keywords">Keywords</Label>
+                  <Input
+                    id="l-keywords"
+                    placeholder="react, jsx, hooks"
+                    value={lessonKeywords}
+                    onChange={(e) => setLessonKeywords(e.target.value)}
+                  />
+                </div>
+              </div>
             </div>
           )}
-
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="l-level">Level</Label>
-              <Input
-                id="l-level"
-                placeholder="Beginner, Advanced..."
-                value={lessonLevel}
-                onChange={(e) => setLessonLevel(e.target.value)}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="l-keywords">Keywords</Label>
-              <Input
-                id="l-keywords"
-                placeholder="react, jsx, hooks"
-                value={lessonKeywords}
-                onChange={(e) => setLessonKeywords(e.target.value)}
-              />
-            </div>
-          </div>
 
           <DialogFooter>
             <Button

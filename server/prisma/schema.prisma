@@ -69,6 +69,7 @@ model Lesson {
   type           LessonType
   content        String?          @db.Text
   videoUrl       String?
+  topic          String?
   level          String?
   keywords       String[]
   aiContext      String?          @db.Text
