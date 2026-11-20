@@ -376,6 +376,7 @@ router.get("/lessons/:id", requireAuth, async (req, res) => {
         moduleId: lesson.moduleId,
         courseId: course.id,
         courseTitle: course.title,
+        courseInstructorId: course.instructorId,
         isCoursePublished: course.isPublished,
         prevLessonId: prevLesson ? prevLesson.id : null,
         nextLessonId: nextLesson ? nextLesson.id : null,

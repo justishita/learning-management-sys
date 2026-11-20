@@ -8,6 +8,7 @@ import authRouter from "./routes/auth.js"
 import instructorRouter from "./routes/instructor.js"
 import studentRouter from "./routes/student.js"
 import quizRouter from "./routes/quiz.js"
+import commentsRouter from "./routes/comments.js"
 import { requireAuth, requireRole, optionalAuth } from "./middleware/auth.js"
 
 dotenv.config()
@@ -44,6 +45,7 @@ app.use("/api/auth", authRouter)
 app.use("/api/instructor", requireAuth, requireRole("INSTRUCTOR"), instructorRouter)
 app.use("/api", optionalAuth, studentRouter)
 app.use("/api", quizRouter)
+app.use("/api", commentsRouter)
 
 // Serve client/dist with SPA fallback in production
 const clientDistPath = path.resolve(__dirname, "../../client/dist")

@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react"
 import { useParams, Link } from "react-router-dom"
+import { useAuth } from "@/context/AuthContext"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
@@ -8,6 +9,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/com
 
 export default function LessonViewer() {
   const { id: courseId, lessonId } = useParams()
+  const { user } = useAuth()
 
   const [lesson, setLesson] = useState(null)
   const [courseModules, setCourseModules] = useState([])
@@ -22,6 +24,19 @@ export default function LessonViewer() {
   const [remainingCalls, setRemainingCalls] = useState(10)
   const [tutorError, setTutorError] = useState("")
   const [practiceAnswers, setPracticeAnswers] = useState({})
+
+  // Comments State
+  const [comments, setComments] = useState([])
+  const [commentTotal, setCommentTotal] = useState(0)
+  const [commentPage, setCommentPage] = useState(1)
+  const [commentTotalPages, setCommentTotalPages] = useState(1)
+  const [commentCourseInstructorId, setCommentCourseInstructorId] = useState(null)
+  const [commentsLoading, setCommentsLoading] = useState(false)
+  const [commentText, setCommentText] = useState("")
+  const [commentPosting, setCommentPosting] = useState(false)
+  const [commentError, setCommentError] = useState("")
+
+  const COMMENT_LIMIT = 10
 
   const fetchLesson = async () => {
     try {
@@ -64,7 +79,78 @@ export default function LessonViewer() {
     setExplanation("")
     setPracticeAnswers({})
     setTutorError("")
+    setComments([])
+    setCommentPage(1)
+    setCommentText("")
+    setCommentError("")
   }, [lessonId])
+
+  const fetchComments = async (page = 1) => {
+    try {
+      setCommentsLoading(true)
+      const res = await fetch(
+        `/api/lessons/${lessonId}/comments?page=${page}&limit=${COMMENT_LIMIT}`,
+        { credentials: "include" }
+      )
+      if (!res.ok) return
+      const data = await res.json()
+      setComments(data.comments || [])
+      setCommentTotal(data.total || 0)
+      setCommentTotalPages(data.totalPages || 1)
+      setCommentCourseInstructorId(data.courseInstructorId || null)
+      setCommentPage(page)
+    } catch (e) {
+      console.error("Comments fetch error:", e)
+    } finally {
+      setCommentsLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (lesson) fetchComments(1)
+  }, [lesson?.id])
+
+  const handlePostComment = async (e) => {
+    e.preventDefault()
+    const trimmed = commentText.trim()
+    if (!trimmed) return
+    try {
+      setCommentPosting(true)
+      setCommentError("")
+      const res = await fetch(`/api/lessons/${lessonId}/comments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ content: trimmed }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || "Failed to post comment")
+      setCommentText("")
+      await fetchComments(1)
+    } catch (err) {
+      setCommentError(err.message)
+    } finally {
+      setCommentPosting(false)
+    }
+  }
+
+  const handleDeleteComment = async (commentId) => {
+    if (!window.confirm("Delete this comment?")) return
+    try {
+      const res = await fetch(`/api/comments/${commentId}`, {
+        method: "DELETE",
+        credentials: "include",
+      })
+      if (!res.ok) {
+        const data = await res.json()
+        throw new Error(data.error || "Failed to delete comment")
+      }
+      setComments((prev) => prev.filter((c) => c.id !== commentId))
+      setCommentTotal((prev) => Math.max(0, prev - 1))
+    } catch (err) {
+      alert(err.message)
+    }
+  }
 
   const handleToggleComplete = async () => {
     if (!lesson) return
@@ -479,6 +565,115 @@ export default function LessonViewer() {
               )}
             </CardContent>
           </Card>
+
+          {/* Comments Section */}
+          <div className="space-y-4 border-t pt-6">
+            <div className="flex items-center justify-between">
+              <h3 className="font-semibold text-base">
+                Comments{commentTotal > 0 && <span className="ml-2 text-sm text-muted-foreground font-normal">({commentTotal})</span>}
+              </h3>
+            </div>
+
+            {/* Post a comment */}
+            <form onSubmit={handlePostComment} className="space-y-2">
+              <Textarea
+                rows={2}
+                placeholder="Add a comment..."
+                value={commentText}
+                onChange={(e) => setCommentText(e.target.value)}
+                maxLength={2000}
+                disabled={commentPosting}
+                className="text-sm resize-none"
+              />
+              <div className="flex items-center justify-between">
+                {commentError && (
+                  <p className="text-xs text-destructive">{commentError}</p>
+                )}
+                <div className="ml-auto flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground">{commentText.length}/2000</span>
+                  <Button
+                    type="submit"
+                    size="sm"
+                    disabled={commentPosting || !commentText.trim()}
+                  >
+                    {commentPosting ? "Posting..." : "Post"}
+                  </Button>
+                </div>
+              </div>
+            </form>
+
+            {/* Comment list */}
+            {commentsLoading ? (
+              <p className="text-sm text-muted-foreground">Loading comments...</p>
+            ) : comments.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No comments yet. Be the first!</p>
+            ) : (
+              <div className="space-y-3">
+                {comments.map((c) => {
+                  const canDelete =
+                    user &&
+                    (c.userId === user.id || commentCourseInstructorId === user.id)
+                  return (
+                    <div key={c.id} className="rounded-md border px-4 py-3 space-y-1 bg-muted/20">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-xs font-semibold truncate">
+                            {c.user?.name || "User"}
+                          </span>
+                          {c.user?.role === "INSTRUCTOR" && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-medium shrink-0">
+                              Instructor
+                            </span>
+                          )}
+                          <span className="text-[11px] text-muted-foreground shrink-0">
+                            {new Date(c.createdAt).toLocaleDateString(undefined, {
+                              month: "short",
+                              day: "numeric",
+                              year: "numeric",
+                            })}
+                          </span>
+                        </div>
+                        {canDelete && (
+                          <button
+                            onClick={() => handleDeleteComment(c.id)}
+                            className="text-[11px] text-muted-foreground hover:text-destructive shrink-0 transition-colors"
+                          >
+                            Delete
+                          </button>
+                        )}
+                      </div>
+                      <p className="text-sm whitespace-pre-wrap break-words">{c.content}</p>
+                    </div>
+                  )
+                })}
+
+                {/* Pagination */}
+                {commentTotalPages > 1 && (
+                  <div className="flex items-center justify-center gap-2 pt-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={commentPage <= 1 || commentsLoading}
+                      onClick={() => fetchComments(commentPage - 1)}
+                    >
+                      ← Prev
+                    </Button>
+                    <span className="text-xs text-muted-foreground">
+                      Page {commentPage} of {commentTotalPages}
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={commentPage >= commentTotalPages || commentsLoading}
+                      onClick={() => fetchComments(commentPage + 1)}
+                    >
+                      Next →
+                    </Button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
 
           {/* Bottom Prev / Next Navigation Controls */}
           <div className="flex items-center justify-between border-t pt-6">
