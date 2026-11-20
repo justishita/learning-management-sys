@@ -35,6 +35,33 @@ export async function requireAuth(req, res, next) {
   }
 }
 
+export async function optionalAuth(req, res, next) {
+  try {
+    const token = req.cookies?.[AUTH_COOKIE_NAME]
+    if (token) {
+      const decoded = verifyToken(token)
+      if (decoded?.userId) {
+        const user = await prisma.user.findUnique({
+          where: { id: decoded.userId },
+          select: {
+            id: true,
+            email: true,
+            name: true,
+            role: true,
+            createdAt: true,
+          },
+        })
+        if (user) {
+          req.user = user
+        }
+      }
+    }
+  } catch (err) {
+    // Ignore errors for optional authentication
+  }
+  next()
+}
+
 export function requireRole(allowedRoles) {
   const roles = Array.isArray(allowedRoles) ? allowedRoles : [allowedRoles]
   return (req, res, next) => {

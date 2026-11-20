@@ -115,14 +115,16 @@ model LessonProgress {
 }
 
 model Quiz {
-  id        String        @id @default(uuid())
-  title     String
-  moduleId  String        @unique
-  module    Module        @relation(fields: [moduleId], references: [id], onDelete: Cascade)
-  createdAt DateTime      @default(now())
-  updatedAt DateTime      @updatedAt
-  questions Question[]
-  attempts  QuizAttempt[]
+  id           String        @id @default(uuid())
+  title        String
+  passMark     Int           @default(70)
+  timeLimitMin Int           @default(10)
+  moduleId     String        @unique
+  module       Module        @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  questions    Question[]
+  attempts     QuizAttempt[]
 }
 
 model Question {

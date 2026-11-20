@@ -6,6 +6,9 @@ import { GuestRoute } from "@/components/GuestRoute"
 import Login from "@/pages/Login"
 import Signup from "@/pages/Signup"
 import Courses from "@/pages/Courses"
+import CourseDetail from "@/pages/CourseDetail"
+import LessonViewer from "@/pages/LessonViewer"
+import QuizTaker from "@/pages/QuizTaker"
 import Instructor from "@/pages/Instructor"
 import CourseEditor from "@/pages/CourseEditor"
 
@@ -57,6 +60,30 @@ export default function App() {
                 element={
                   <ProtectedRoute allowedRole="STUDENT">
                     <Courses />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/courses/:id"
+                element={
+                  <ProtectedRoute allowedRole="STUDENT">
+                    <CourseDetail />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/courses/:id/lessons/:lessonId"
+                element={
+                  <ProtectedRoute allowedRole="STUDENT">
+                    <LessonViewer />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/quizzes/:id"
+                element={
+                  <ProtectedRoute allowedRole="STUDENT">
+                    <QuizTaker />
                   </ProtectedRoute>
                 }
               />

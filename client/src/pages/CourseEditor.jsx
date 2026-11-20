@@ -29,19 +29,30 @@ export default function CourseEditor() {
 
   // Module Modal State
   const [isModuleModalOpen, setIsModuleModalOpen] = useState(false)
-  const [editingModule, setEditingModule] = useState(null) // null for create
+  const [editingModule, setEditingModule] = useState(null)
   const [moduleTitle, setModuleTitle] = useState("")
 
   // Lesson Modal State
   const [isLessonModalOpen, setIsLessonModalOpen] = useState(false)
   const [activeModuleId, setActiveModuleId] = useState(null)
-  const [editingLesson, setEditingLesson] = useState(null) // null for create
+  const [editingLesson, setEditingLesson] = useState(null)
   const [lessonTitle, setLessonTitle] = useState("")
   const [lessonType, setLessonType] = useState("TEXT")
   const [lessonContent, setLessonContent] = useState("")
   const [lessonVideoUrl, setLessonVideoUrl] = useState("")
   const [lessonLevel, setLessonLevel] = useState("Beginner")
   const [lessonKeywords, setLessonKeywords] = useState("")
+
+  // Quiz Modal State
+  const [isQuizModalOpen, setIsQuizModalOpen] = useState(false)
+  const [quizModuleId, setQuizModuleId] = useState(null)
+  const [quizId, setQuizId] = useState(null)
+  const [quizTitle, setQuizTitle] = useState("")
+  const [quizPassMark, setQuizPassMark] = useState(70)
+  const [quizTimeLimit, setQuizTimeLimit] = useState(10)
+  const [quizQuestions, setQuizQuestions] = useState([
+    { prompt: "", options: ["", "", "", ""], correctIndex: 0 },
+  ])
 
   const fetchCourse = async () => {
     try {
@@ -260,6 +271,125 @@ export default function CourseEditor() {
     }
   }
 
+  // Quiz actions
+  const openQuizEditor = async (mod) => {
+    setQuizModuleId(mod.id)
+    if (mod.quiz) {
+      setQuizId(mod.quiz.id)
+      try {
+        const res = await fetch(`/api/instructor/modules/${mod.id}/quiz`, {
+          credentials: "include",
+        })
+        if (res.ok) {
+          const data = await res.json()
+          setQuizTitle(data.quiz?.title || "Module Quiz")
+          setQuizPassMark(data.quiz?.passMark ?? 70)
+          setQuizTimeLimit(data.quiz?.timeLimitMin ?? 10)
+          setQuizQuestions(
+            data.quiz?.questions?.length > 0
+              ? data.quiz.questions.map((q) => {
+                  let opts = Array.isArray(q.options) ? [...q.options] : []
+                  while (opts.length < 4) opts.push("")
+                  opts = opts.slice(0, 4)
+                  return {
+                    prompt: q.prompt,
+                    options: opts,
+                    correctIndex: q.correctIndex ?? 0,
+                  }
+                })
+              : [{ prompt: "", options: ["", "", "", ""], correctIndex: 0 }]
+          )
+        }
+      } catch (err) {
+        setQuizTitle("Module Quiz")
+        setQuizPassMark(70)
+        setQuizTimeLimit(10)
+        setQuizQuestions([{ prompt: "", options: ["", "", "", ""], correctIndex: 0 }])
+      }
+    } else {
+      setQuizId(null)
+      setQuizTitle(`${mod.title} Assessment`)
+      setQuizPassMark(70)
+      setQuizTimeLimit(10)
+      setQuizQuestions([{ prompt: "", options: ["", "", "", ""], correctIndex: 0 }])
+    }
+    setIsQuizModalOpen(true)
+  }
+
+  const handleAddQuestion = () => {
+    setQuizQuestions((prev) => [
+      ...prev,
+      { prompt: "", options: ["", "", "", ""], correctIndex: 0 },
+    ])
+  }
+
+  const handleRemoveQuestion = (idx) => {
+    setQuizQuestions((prev) => prev.filter((_, i) => i !== idx))
+  }
+
+  const handleSaveQuiz = async (e) => {
+    e.preventDefault()
+    if (!quizTitle.trim()) return
+
+    // Ensure all 4 options are filled for each question
+    for (let i = 0; i < quizQuestions.length; i++) {
+      const q = quizQuestions[i]
+      if (!q.prompt.trim()) {
+        alert(`Question ${i + 1} prompt cannot be empty`)
+        return
+      }
+      for (let j = 0; j < 4; j++) {
+        if (!q.options[j]?.trim()) {
+          alert(`Question ${i + 1}, option ${String.fromCharCode(65 + j)} cannot be empty`)
+          return
+        }
+      }
+    }
+
+    try {
+      const res = await fetch(`/api/instructor/modules/${quizModuleId}/quiz`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          title: quizTitle.trim(),
+          passMark: Number(quizPassMark) || 70,
+          timeLimitMin: Number(quizTimeLimit) || 10,
+          questions: quizQuestions.map((q) => ({
+            prompt: q.prompt.trim(),
+            options: q.options.map((o) => o.trim()),
+            correctIndex: Number(q.correctIndex),
+          })),
+        }),
+      })
+
+      if (!res.ok) {
+        const data = await res.json()
+        throw new Error(data.error || "Failed to save quiz")
+      }
+
+      setIsQuizModalOpen(false)
+      await fetchCourse()
+    } catch (err) {
+      alert(err.message)
+    }
+  }
+
+  const handleDeleteQuiz = async (quizIdToDelete) => {
+    if (!window.confirm("Delete this module quiz?")) return
+    try {
+      const res = await fetch(`/api/instructor/quizzes/${quizIdToDelete}`, {
+        method: "DELETE",
+        credentials: "include",
+      })
+      if (!res.ok) throw new Error("Failed to delete quiz")
+      setIsQuizModalOpen(false)
+      await fetchCourse()
+    } catch (err) {
+      alert(err.message)
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex min-h-[50vh] items-center justify-center">
@@ -324,7 +454,7 @@ export default function CourseEditor() {
           <div>
             <h2 className="text-xl font-semibold tracking-tight">Curriculum Structure</h2>
             <p className="text-xs text-muted-foreground">
-              Add modules and lessons to build your course content.
+              Add modules, lessons, and module quizzes.
             </p>
           </div>
           <Button size="sm" onClick={openCreateModule}>
@@ -360,6 +490,13 @@ export default function CourseEditor() {
 
                   <div className="flex items-center gap-2">
                     <Button
+                      variant={mod.quiz ? "secondary" : "outline"}
+                      size="sm"
+                      onClick={() => openQuizEditor(mod)}
+                    >
+                      {mod.quiz ? "Edit Quiz" : "+ Quiz"}
+                    </Button>
+                    <Button
                       variant="ghost"
                       size="sm"
                       onClick={() => openCreateLesson(mod.id)}
@@ -384,7 +521,27 @@ export default function CourseEditor() {
                   </div>
                 </CardHeader>
 
-                <CardContent className="p-4 space-y-2">
+                <CardContent className="p-4 space-y-3">
+                  {/* Quiz banner if configured */}
+                  {mod.quiz && (
+                    <div className="flex items-center justify-between p-2.5 rounded-md border border-primary/20 bg-primary/5 text-xs">
+                      <div className="flex items-center gap-2 font-medium">
+                        <span className="rounded bg-primary/10 text-primary px-1.5 py-0.5 uppercase tracking-wider text-[10px]">
+                          Assessment
+                        </span>
+                        <span>Quiz: {mod.quiz.title}</span>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 text-xs"
+                        onClick={() => openQuizEditor(mod)}
+                      >
+                        Configure
+                      </Button>
+                    </div>
+                  )}
+
                   {mod.lessons.length === 0 ? (
                     <p className="text-xs text-muted-foreground py-2 italic">
                       No lessons in this module. Click "+ Add Lesson" above.
@@ -629,6 +786,162 @@ export default function CourseEditor() {
               Cancel
             </Button>
             <Button type="submit">{editingLesson ? "Save Changes" : "Create Lesson"}</Button>
+          </DialogFooter>
+        </form>
+      </Dialog>
+
+      {/* Quiz Modal */}
+      <Dialog open={isQuizModalOpen} onClose={() => setIsQuizModalOpen(false)}>
+        <DialogHeader>
+          <DialogTitle>{quizId ? "Edit Module Quiz" : "Create Module Quiz"}</DialogTitle>
+          <DialogDescription>
+            Add multiple choice questions with a designated correct answer.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSaveQuiz} className="space-y-4 max-h-[75vh] overflow-y-auto pr-1">
+          <div className="space-y-2">
+            <Label htmlFor="q-title">Quiz Title</Label>
+            <Input
+              id="q-title"
+              value={quizTitle}
+              onChange={(e) => setQuizTitle(e.target.value)}
+              placeholder="e.g. Module 1 Knowledge Check"
+              required
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="q-passmark">Pass Mark (%)</Label>
+              <Input
+                id="q-passmark"
+                type="number"
+                min={1}
+                max={100}
+                value={quizPassMark}
+                onChange={(e) => setQuizPassMark(e.target.value)}
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="q-timelimit">Time Limit (Minutes)</Label>
+              <Input
+                id="q-timelimit"
+                type="number"
+                min={1}
+                max={180}
+                value={quizTimeLimit}
+                onChange={(e) => setQuizTimeLimit(e.target.value)}
+                required
+              />
+            </div>
+          </div>
+
+          <div className="space-y-4 pt-2">
+            <div className="flex items-center justify-between">
+              <Label>Multiple-Choice Questions ({quizQuestions.length})</Label>
+              <Button type="button" variant="outline" size="sm" onClick={handleAddQuestion}>
+                + Add Question
+              </Button>
+            </div>
+
+            {quizQuestions.map((q, qIdx) => (
+              <div key={qIdx} className="p-3 border rounded-md space-y-3 bg-muted/20">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold uppercase">Question {qIdx + 1}</span>
+                  {quizQuestions.length > 1 && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 text-xs text-destructive hover:text-destructive"
+                      onClick={() => handleRemoveQuestion(qIdx)}
+                    >
+                      Remove
+                    </Button>
+                  )}
+                </div>
+
+                <Input
+                  placeholder="Enter question prompt..."
+                  value={q.prompt}
+                  onChange={(e) =>
+                    setQuizQuestions((prev) =>
+                      prev.map((item, i) =>
+                        i === qIdx ? { ...item, prompt: e.target.value } : item
+                      )
+                    )
+                  }
+                  required
+                />
+
+                <div className="space-y-2 pl-1">
+                  <span className="text-xs text-muted-foreground block">
+                    4 Options (select radio for the correct answer):
+                  </span>
+                  {[0, 1, 2, 3].map((optIdx) => (
+                    <div key={optIdx} className="flex items-center gap-2">
+                      <input
+                        type="radio"
+                        id={`opt-${qIdx}-${optIdx}`}
+                        name={`correct-${qIdx}`}
+                        checked={q.correctIndex === optIdx}
+                        onChange={() =>
+                          setQuizQuestions((prev) =>
+                            prev.map((item, i) =>
+                              i === qIdx ? { ...item, correctIndex: optIdx } : item
+                            )
+                          )
+                        }
+                        className="h-4 w-4 text-primary"
+                      />
+                      <span className="text-xs font-mono font-bold w-4">
+                        {String.fromCharCode(65 + optIdx)}
+                      </span>
+                      <Input
+                        placeholder={`Option ${String.fromCharCode(65 + optIdx)} text`}
+                        value={q.options[optIdx] || ""}
+                        onChange={(e) =>
+                          setQuizQuestions((prev) =>
+                            prev.map((item, i) => {
+                              if (i !== qIdx) return item
+                              const newOpts = [...item.options]
+                              newOpts[optIdx] = e.target.value
+                              return { ...item, options: newOpts }
+                            })
+                          )
+                        }
+                        required
+                        className="h-8 text-xs flex-1"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <DialogFooter className="flex justify-between items-center pt-4">
+            {quizId && (
+              <Button
+                type="button"
+                variant="destructive"
+                size="sm"
+                onClick={() => handleDeleteQuiz(quizId)}
+              >
+                Delete Quiz
+              </Button>
+            )}
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setIsQuizModalOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button type="submit">Save Quiz</Button>
+            </div>
           </DialogFooter>
         </form>
       </Dialog>
