@@ -6,3 +6,182 @@ datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
+
+enum Role {
+  STUDENT
+  INSTRUCTOR
+}
+
+enum LessonType {
+  TEXT
+  VIDEO
+}
+
+model User {
+  id             String           @id @default(uuid())
+  email          String           @unique
+  password       String
+  name           String?
+  role           Role             @default(STUDENT)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  courses        Course[]         @relation("InstructorCourses")
+  enrollments    Enrollment[]
+  lessonProgress LessonProgress[]
+  quizAttempts   QuizAttempt[]
+  comments       Comment[]
+  tutorSessions  TutorSession[]
+}
+
+model Course {
+  id           String       @id @default(uuid())
+  title        String
+  description  String?
+  isPublished  Boolean      @default(false)
+  instructorId String
+  instructor   User         @relation("InstructorCourses", fields: [instructorId], references: [id], onDelete: Cascade)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  modules      Module[]
+  enrollments  Enrollment[]
+
+  @@index([instructorId])
+}
+
+model Module {
+  id        String   @id @default(uuid())
+  title     String
+  position  Int
+  courseId  String
+  course    Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  lessons   Lesson[]
+  quiz      Quiz?
+
+  @@index([courseId])
+  @@index([courseId, position])
+}
+
+model Lesson {
+  id             String           @id @default(uuid())
+  title          String
+  type           LessonType
+  content        String?          @db.Text
+  videoUrl       String?
+  level          String?
+  keywords       String[]
+  aiContext      String?          @db.Text
+  position       Int
+  moduleId       String
+  module         Module           @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  lessonProgress LessonProgress[]
+  comments       Comment[]
+  tutorSessions  TutorSession[]
+
+  @@index([moduleId])
+  @@index([moduleId, position])
+}
+
+model Enrollment {
+  id        String   @id @default(uuid())
+  userId    String
+  courseId  String
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course    Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, courseId])
+  @@index([userId])
+  @@index([courseId])
+}
+
+model LessonProgress {
+  id          String    @id @default(uuid())
+  userId      String
+  lessonId    String
+  isCompleted Boolean   @default(false)
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lesson      Lesson    @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, lessonId])
+  @@index([userId])
+  @@index([lessonId])
+}
+
+model Quiz {
+  id        String        @id @default(uuid())
+  title     String
+  moduleId  String        @unique
+  module    Module        @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  questions Question[]
+  attempts  QuizAttempt[]
+}
+
+model Question {
+  id           String   @id @default(uuid())
+  quizId       String
+  quiz         Quiz     @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  prompt       String
+  options      Json
+  correctIndex Int
+  position     Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([quizId])
+}
+
+model QuizAttempt {
+  id          String    @id @default(uuid())
+  userId      String
+  quizId      String
+  score       Float?
+  startedAt   DateTime  @default(now())
+  expiresAt   DateTime
+  submittedAt DateTime?
+  answers     Json?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  quiz        Quiz      @relation(fields: [quizId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, quizId])
+  @@index([userId])
+  @@index([quizId])
+}
+
+model Comment {
+  id        String   @id @default(uuid())
+  content   String
+  userId    String
+  lessonId  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lesson    Lesson   @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([lessonId])
+}
+
+model TutorSession {
+  id        String   @id @default(uuid())
+  userId    String
+  lessonId  String?
+  prompt    String   @db.Text
+  response  Json?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lesson    Lesson?  @relation(fields: [lessonId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([lessonId])
+}
