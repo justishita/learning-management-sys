@@ -1,6 +1,8 @@
 import { Router } from "express"
 import prisma from "../db.js"
 import { requireAuth } from "../middleware/auth.js"
+import { callGeminiTutor } from "../lib/gemini.js"
+import { tutorRequestSchema } from "../schemas/tutor.js"
 
 const router = Router()
 
@@ -463,6 +465,126 @@ router.post("/lessons/:id/progress", requireAuth, async (req, res) => {
   } catch (err) {
     console.error("Update progress error:", err)
     return res.status(500).json({ error: "Failed to update lesson progress" })
+  }
+})
+
+// -------------------------------------------------------------
+// AI TUTOR ("Explain It Back")
+// -------------------------------------------------------------
+
+// Get remaining tutor quota for the day (max 10 calls/user/day)
+router.get("/lessons/:id/tutor/quota", requireAuth, async (req, res) => {
+  try {
+    const todayStart = new Date()
+    todayStart.setHours(0, 0, 0, 0)
+
+    const callsToday = await prisma.tutorSession.count({
+      where: {
+        userId: req.user.id,
+        createdAt: { gte: todayStart },
+      },
+    })
+
+    return res.json({
+      callsToday,
+      remainingCalls: Math.max(0, 10 - callsToday),
+      maxDailyCalls: 10,
+    })
+  } catch (err) {
+    console.error("Fetch tutor quota error:", err)
+    return res.status(500).json({ error: "Failed to fetch tutor quota" })
+  }
+})
+
+// Submit explanation to AI Tutor (max 1500 chars, ground truth only, no personal data, max 10/day)
+router.post("/lessons/:id/tutor", requireAuth, async (req, res) => {
+  try {
+    // 1. Validate request body
+    const parseResult = tutorRequestSchema.safeParse(req.body)
+    if (!parseResult.success) {
+      return res.status(400).json({
+        error: "Validation failed",
+        details: parseResult.error.flatten().fieldErrors,
+      })
+    }
+
+    const { explanation } = parseResult.data
+
+    // 2. Check 10 calls per user per day rate limit
+    const todayStart = new Date()
+    todayStart.setHours(0, 0, 0, 0)
+
+    const callsToday = await prisma.tutorSession.count({
+      where: {
+        userId: req.user.id,
+        createdAt: { gte: todayStart },
+      },
+    })
+
+    if (callsToday >= 10) {
+      return res.status(429).json({
+        error: "Daily limit reached: You can make a maximum of 10 AI Tutor calls per day.",
+        callsToday,
+        remainingCalls: 0,
+      })
+    }
+
+    // 3. Fetch lesson ground truth
+    const lesson = await prisma.lesson.findUnique({
+      where: { id: req.params.id },
+      include: {
+        module: {
+          select: { courseId: true },
+        },
+      },
+    })
+
+    if (!lesson) {
+      return res.status(404).json({ error: "Lesson not found" })
+    }
+
+    // Check enrollment
+    const isEnrolled = await prisma.enrollment.findUnique({
+      where: {
+        userId_courseId: {
+          userId: req.user.id,
+          courseId: lesson.module.courseId,
+        },
+      },
+    })
+
+    if (!isEnrolled) {
+      return res.status(403).json({ error: "Must be enrolled to use the AI Tutor" })
+    }
+
+    // Ground truth: use cached Lesson.aiContext for video lessons, content for text lessons
+    const groundTruth =
+      lesson.type === "VIDEO"
+        ? (lesson.aiContext || lesson.content || `Video Lesson: ${lesson.title}`)
+        : (lesson.content || `Text Lesson: ${lesson.title}`)
+
+    // 4. Call Gemini in JSON mode (sends ONLY groundTruth and explanation; NO personal data)
+    const feedback = await callGeminiTutor(groundTruth, explanation)
+
+    // 5. Persist TutorSession row
+    const session = await prisma.tutorSession.create({
+      data: {
+        userId: req.user.id,
+        lessonId: lesson.id,
+        prompt: explanation,
+        response: feedback,
+      },
+    })
+
+    return res.json({
+      feedback,
+      sessionId: session.id,
+      remainingCalls: Math.max(0, 10 - (callsToday + 1)),
+      callsToday: callsToday + 1,
+    })
+  } catch (err) {
+    console.error("AI Tutor error:", err)
+    return res.status(500).json({ error: err.message || "Failed to process AI tutor explanation" })
   }
 })
 
