@@ -90,7 +90,7 @@ router.get("/courses/:id", async (req, res) => {
               orderBy: { position: "asc" },
             },
             quiz: {
-              select: { id: true, title: true },
+              select: { id: true, title: true, passMark: true, timeLimitMin: true },
             },
           },
         },
@@ -105,6 +105,168 @@ router.get("/courses/:id", async (req, res) => {
   } catch (err) {
     console.error("Get course error:", err)
     return res.status(500).json({ error: "Failed to fetch course" })
+  }
+})
+
+// Instructor Course Analytics & Enrolled Students (Single Aggregate Query)
+router.get("/courses/:id/analytics", async (req, res) => {
+  try {
+    // Single aggregate query with includes for modules, lessons, quizzes, enrollments, student progress and attempts
+    const course = await prisma.course.findFirst({
+      where: {
+        id: req.params.id,
+        instructorId: req.user.id,
+      },
+      include: {
+        modules: {
+          orderBy: { position: "asc" },
+          include: {
+            lessons: {
+              select: { id: true },
+            },
+            quiz: {
+              select: { id: true, title: true, passMark: true, timeLimitMin: true },
+            },
+          },
+        },
+        enrollments: {
+          orderBy: { createdAt: "desc" },
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                lessonProgress: {
+                  where: {
+                    lesson: {
+                      module: {
+                        courseId: req.params.id,
+                      },
+                    },
+                  },
+                  select: {
+                    lessonId: true,
+                    isCompleted: true,
+                  },
+                },
+                quizAttempts: {
+                  where: {
+                    quiz: {
+                      module: {
+                        courseId: req.params.id,
+                      },
+                    },
+                  },
+                  select: {
+                    quizId: true,
+                    score: true,
+                    submittedAt: true,
+                    expiresAt: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    })
+
+    if (!course) {
+      return res.status(404).json({ error: "Course not found or unauthorized" })
+    }
+
+    const totalLessons = course.modules.reduce((sum, m) => sum + m.lessons.length, 0)
+
+    const quizModules = course.modules
+      .filter((m) => m.quiz)
+      .map((m) => ({
+        moduleId: m.id,
+        moduleTitle: m.title,
+        quizId: m.quiz.id,
+        quizTitle: m.quiz.title,
+        passMark: m.quiz.passMark,
+      }))
+
+    const students = course.enrollments.map((enr) => {
+      const student = enr.user
+      const completedLessons = (student.lessonProgress || []).filter(
+        (lp) => lp.isCompleted
+      ).length
+
+      const progressPercentage =
+        totalLessons > 0 ? Math.round((completedLessons / totalLessons) * 100) : 0
+
+      const quizResults = quizModules.map((qm) => {
+        const attempt = (student.quizAttempts || []).find((a) => a.quizId === qm.quizId)
+        if (!attempt) {
+          return {
+            quizId: qm.quizId,
+            quizTitle: qm.quizTitle,
+            moduleTitle: qm.moduleTitle,
+            passMark: qm.passMark,
+            status: "NOT_ATTEMPTED",
+            score: null,
+            passed: null,
+          }
+        }
+
+        const isSubmitted = Boolean(attempt.submittedAt)
+        const isExpired = !isSubmitted && new Date() > attempt.expiresAt
+
+        if (!isSubmitted && !isExpired) {
+          return {
+            quizId: qm.quizId,
+            quizTitle: qm.quizTitle,
+            moduleTitle: qm.moduleTitle,
+            passMark: qm.passMark,
+            status: "IN_PROGRESS",
+            score: null,
+            passed: null,
+          }
+        }
+
+        const score = attempt.score ?? 0
+        const passed = score >= qm.passMark
+
+        return {
+          quizId: qm.quizId,
+          quizTitle: qm.quizTitle,
+          moduleTitle: qm.moduleTitle,
+          passMark: qm.passMark,
+          status: "COMPLETED",
+          score,
+          passed,
+          submittedAt: attempt.submittedAt || attempt.expiresAt,
+        }
+      })
+
+      return {
+        studentId: student.id,
+        name: student.name || "Student",
+        email: student.email,
+        enrolledAt: enr.createdAt,
+        completedLessons,
+        totalLessons,
+        progressPercentage,
+        quizResults,
+      }
+    })
+
+    return res.json({
+      course: {
+        id: course.id,
+        title: course.title,
+        isPublished: course.isPublished,
+        totalLessons,
+        enrolledCount: students.length,
+        quizModules,
+      },
+      students,
+    })
+  } catch (err) {
+    console.error("Course analytics error:", err)
+    return res.status(500).json({ error: "Failed to fetch course analytics" })
   }
 })
 
