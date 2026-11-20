@@ -5,7 +5,8 @@ import path from "path"
 import { fileURLToPath } from "url"
 import dotenv from "dotenv"
 import authRouter from "./routes/auth.js"
-import { requireAuth } from "./middleware/auth.js"
+import instructorRouter from "./routes/instructor.js"
+import { requireAuth, requireRole } from "./middleware/auth.js"
 
 dotenv.config()
 
@@ -38,6 +39,7 @@ app.get("/api/me", requireAuth, (req, res) => {
 })
 
 app.use("/api/auth", authRouter)
+app.use("/api/instructor", requireAuth, requireRole("INSTRUCTOR"), instructorRouter)
 
 // Serve client/dist with SPA fallback in production
 const clientDistPath = path.resolve(__dirname, "../../client/dist")
