@@ -45,6 +45,7 @@ model Course {
   modules      Module[]
   enrollments  Enrollment[]
 
+  @@unique([instructorId, title])
   @@index([instructorId])
 }
 
