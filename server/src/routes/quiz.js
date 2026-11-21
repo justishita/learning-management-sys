@@ -453,17 +453,33 @@ router.patch("/quizzes/:id/answers", requireAuth, async (req, res) => {
 
     const { answers } = parseResult.data
 
+    // Only fetch what we need — no questions, no correctIndex
     const quiz = await prisma.quiz.findUnique({
       where: { id: req.params.id },
-      include: {
-        questions: {
-          orderBy: { position: "asc" },
-        },
+      select: {
+        id: true,
+        passMark: true,
+        timeLimitMin: true,
+        moduleId: true,
+        module: { select: { courseId: true } },
       },
     })
 
     if (!quiz) {
       return res.status(404).json({ error: "Quiz not found" })
+    }
+
+    // Enrollment check (fix #2)
+    const enrollment = await prisma.enrollment.findUnique({
+      where: {
+        userId_courseId: {
+          userId: req.user.id,
+          courseId: quiz.module.courseId,
+        },
+      },
+    })
+    if (!enrollment) {
+      return res.status(403).json({ error: "Must be enrolled to save quiz answers" })
     }
 
     let attempt = await prisma.quizAttempt.findUnique({
@@ -483,28 +499,30 @@ router.patch("/quizzes/:id/answers", requireAuth, async (req, res) => {
     if (attempt.submittedAt) {
       return res.status(400).json({
         error: "Attempt is already submitted",
-        attempt,
       })
     }
 
     const now = new Date()
 
-    // Lazy grading if expired
+    // Lazy grading if expired — load questions only here, and DO NOT return correctIndex
     if (now > attempt.expiresAt) {
+      const questions = await prisma.question.findMany({
+        where: { quizId: quiz.id },
+      })
       const mergedAnswers = { ...(attempt.answers || {}), ...answers }
-      const graded = await gradeAttempt(
-        attempt,
-        quiz.questions,
-        mergedAnswers,
-        attempt.expiresAt
-      )
+      const graded = await gradeAttempt(attempt, questions, mergedAnswers, attempt.expiresAt)
       return res.json({
         isExpired: true,
         attempt: {
-          ...graded,
+          id: graded.id,
+          startedAt: graded.startedAt,
+          expiresAt: graded.expiresAt,
+          submittedAt: graded.submittedAt,
+          score: graded.score,
           passed: graded.score >= quiz.passMark,
+          answers: graded.answers,
         },
-        questions: quiz.questions,
+        // correctIndex intentionally omitted — use GET /quizzes/:id after submission for review
       })
     }
 
@@ -539,6 +557,7 @@ router.post("/quizzes/:id/submit", requireAuth, async (req, res) => {
     const quiz = await prisma.quiz.findUnique({
       where: { id: req.params.id },
       include: {
+        module: { select: { courseId: true } },
         questions: {
           orderBy: { position: "asc" },
         },
@@ -547,6 +566,19 @@ router.post("/quizzes/:id/submit", requireAuth, async (req, res) => {
 
     if (!quiz) {
       return res.status(404).json({ error: "Quiz not found" })
+    }
+
+    // Enrollment check (fix #2)
+    const enrollment = await prisma.enrollment.findUnique({
+      where: {
+        userId_courseId: {
+          userId: req.user.id,
+          courseId: quiz.module.courseId,
+        },
+      },
+    })
+    if (!enrollment) {
+      return res.status(403).json({ error: "Must be enrolled to submit this quiz" })
     }
 
     let attempt = await prisma.quizAttempt.findUnique({
@@ -562,14 +594,19 @@ router.post("/quizzes/:id/submit", requireAuth, async (req, res) => {
       return res.status(400).json({ error: "No active attempt found. Start the quiz first." })
     }
 
-    // If already submitted, return the graded attempt with questions and correctIndex
+    // If already submitted, return graded attempt + correctIndex for review
     if (attempt.submittedAt) {
       return res.json({
         attempt: {
-          ...attempt,
+          id: attempt.id,
+          startedAt: attempt.startedAt,
+          expiresAt: attempt.expiresAt,
+          submittedAt: attempt.submittedAt,
+          score: attempt.score,
+          answers: attempt.answers,
           passed: attempt.score !== null ? attempt.score >= quiz.passMark : null,
         },
-        questions: quiz.questions,
+        questions: quiz.questions, // correctIndex included post-submission
       })
     }
 
@@ -590,11 +627,16 @@ router.post("/quizzes/:id/submit", requireAuth, async (req, res) => {
 
     return res.json({
       attempt: {
-        ...updatedAttempt,
+        id: updatedAttempt.id,
+        startedAt: updatedAttempt.startedAt,
+        expiresAt: updatedAttempt.expiresAt,
+        submittedAt: updatedAttempt.submittedAt,
+        score: updatedAttempt.score,
+        answers: updatedAttempt.answers,
         passed: updatedAttempt.score >= quiz.passMark,
       },
       isExpired,
-      questions: quiz.questions,
+      questions: quiz.questions, // correctIndex included — this is the review response
     })
   } catch (err) {
     console.error("Submit quiz error:", err)

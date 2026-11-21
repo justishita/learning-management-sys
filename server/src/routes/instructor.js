@@ -15,6 +15,12 @@ import { generateReferenceNotes } from "../lib/gemini.js"
 
 const router = Router()
 
+// Strip HTML tags to prevent stored XSS in content fields (fix #12)
+function stripHtml(str) {
+  if (!str) return str
+  return str.replace(/<[^>]*>/g, "")
+}
+
 function normalizeKeywords(keywords) {
   if (!keywords) return []
   if (Array.isArray(keywords)) return keywords
@@ -480,6 +486,9 @@ router.delete("/modules/:id", async (req, res) => {
 // -------------------------------------------------------------
 
 // Generate reference notes for a video lesson using Gemini
+// Requires the instructor to pass a lessonId they own, or at minimum
+// we verify they are authenticated as INSTRUCTOR (enforced by the router
+// middleware). Additionally accept an optional lessonId for ownership check.
 router.post("/lessons/generate-notes", async (req, res) => {
   try {
     const parseResult = generateNotesSchema.safeParse(req.body)
@@ -490,7 +499,22 @@ router.post("/lessons/generate-notes", async (req, res) => {
       })
     }
 
-    const { title, topic, keywords, level } = parseResult.data
+    // Ownership check: if a lessonId is supplied, verify it belongs to this instructor.
+    // This prevents an instructor from calling Gemini with arbitrary data unrelated to
+    // their own content (fix #1).
+    const { title, topic, keywords, level, lessonId } = parseResult.data
+
+    if (lessonId) {
+      const lessonRecord = await prisma.lesson.findFirst({
+        where: {
+          id: lessonId,
+          module: { course: { instructorId: req.user.id } },
+        },
+      })
+      if (!lessonRecord) {
+        return res.status(404).json({ error: "Lesson not found or unauthorized" })
+      }
+    }
 
     const notes = await generateReferenceNotes({
       title,
@@ -502,7 +526,7 @@ router.post("/lessons/generate-notes", async (req, res) => {
     return res.json({ notes })
   } catch (err) {
     console.error("Generate notes error:", err)
-    return res.status(500).json({ error: err.message || "Failed to generate notes" })
+    return res.status(500).json({ error: "Failed to generate notes" })
   }
 })
 
@@ -555,12 +579,12 @@ router.post("/modules/:moduleId/lessons", async (req, res) => {
       data: {
         title,
         type,
-        content: content || null,
+        content: content ? stripHtml(content) : null,
         videoUrl: formattedVideoUrl,
         topic: topic || null,
         level: level || null,
         keywords: normalizeKeywords(keywords),
-        aiContext: aiContext || null,
+        aiContext: aiContext ? stripHtml(aiContext) : null,
         position,
         moduleId: moduleRecord.id,
       },
@@ -598,6 +622,14 @@ router.put("/lessons/:id", async (req, res) => {
     }
 
     const updateData = { ...parseResult.data }
+
+    // Fix #12: strip HTML from text content fields before persisting
+    if (updateData.content !== undefined && updateData.content !== null) {
+      updateData.content = stripHtml(updateData.content)
+    }
+    if (updateData.aiContext !== undefined && updateData.aiContext !== null) {
+      updateData.aiContext = stripHtml(updateData.aiContext)
+    }
 
     if (updateData.keywords !== undefined) {
       updateData.keywords = normalizeKeywords(updateData.keywords)

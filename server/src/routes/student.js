@@ -3,6 +3,7 @@ import prisma from "../db.js"
 import { requireAuth } from "../middleware/auth.js"
 import { callGeminiTutor } from "../lib/gemini.js"
 import { tutorRequestSchema } from "../schemas/tutor.js"
+import { updateProgressSchema } from "../schemas/student.js"
 
 const router = Router()
 
@@ -401,11 +402,23 @@ router.get("/lessons/:id", requireAuth, async (req, res) => {
 // Toggle or set lesson completion (idempotent)
 router.post("/lessons/:id/progress", requireAuth, async (req, res) => {
   try {
+    // Zod validation on body (fix #5)
+    const parseResult = updateProgressSchema.safeParse(req.body)
+    if (!parseResult.success) {
+      return res.status(400).json({
+        error: "Validation failed",
+        details: parseResult.error.flatten().fieldErrors,
+      })
+    }
+
     const lesson = await prisma.lesson.findUnique({
       where: { id: req.params.id },
       include: {
         module: {
-          select: { courseId: true },
+          select: {
+            courseId: true,
+            course: { select: { instructorId: true } },
+          },
         },
       },
     })
@@ -414,17 +427,22 @@ router.post("/lessons/:id/progress", requireAuth, async (req, res) => {
       return res.status(404).json({ error: "Lesson not found" })
     }
 
-    const isEnrolled = await prisma.enrollment.findUnique({
-      where: {
-        userId_courseId: {
-          userId: req.user.id,
-          courseId: lesson.module.courseId,
-        },
-      },
-    })
+    const isOwner = lesson.module.course.instructorId === req.user.id
 
-    if (!isEnrolled) {
-      return res.status(403).json({ error: "Must be enrolled to mark progress" })
+    // Allow enrolled students OR the course instructor (fix #3)
+    if (!isOwner) {
+      const isEnrolled = await prisma.enrollment.findUnique({
+        where: {
+          userId_courseId: {
+            userId: req.user.id,
+            courseId: lesson.module.courseId,
+          },
+        },
+      })
+
+      if (!isEnrolled) {
+        return res.status(403).json({ error: "Must be enrolled to mark progress" })
+      }
     }
 
     const current = await prisma.lessonProgress.findUnique({
@@ -437,8 +455,8 @@ router.post("/lessons/:id/progress", requireAuth, async (req, res) => {
     })
 
     const isCompleted =
-      req.body.isCompleted !== undefined
-        ? Boolean(req.body.isCompleted)
+      parseResult.data.isCompleted !== undefined
+        ? parseResult.data.isCompleted
         : current
         ? !current.isCompleted
         : true
@@ -594,7 +612,7 @@ router.post("/lessons/:id/tutor", requireAuth, async (req, res) => {
     })
   } catch (err) {
     console.error("AI Tutor error:", err)
-    return res.status(500).json({ error: err.message || "Failed to process AI tutor explanation" })
+    return res.status(500).json({ error: "Failed to process AI tutor explanation" })
   }
 })
 

@@ -2,49 +2,80 @@ import { Router } from "express"
 import prisma from "../db.js"
 import { requireAuth } from "../middleware/auth.js"
 import { createCommentSchema } from "../schemas/comment.js"
+import { z } from "zod"
 
 const router = Router()
 
-// List comments for a lesson (paginated, newest first)
-router.get("/lessons/:id/comments", requireAuth, async (req, res) => {
-  try {
-    const page = Math.max(1, parseInt(req.query.page, 10) || 1)
-    const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 10))
-    const skip = (page - 1) * limit
+// Issue #6: Zod schema for pagination query params
+const paginationSchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(50).default(10),
+})
 
-    const lesson = await prisma.lesson.findUnique({
-      where: { id: req.params.id },
-      include: {
-        module: {
-          select: {
-            courseId: true,
-            course: {
-              select: { instructorId: true, isPublished: true },
+// Issue #11: strip HTML tags to prevent stored XSS even if frontend rendering changes
+function stripHtml(str) {
+  return str.replace(/<[^>]*>/g, "")
+}
+
+// Issue #9: single query that checks lesson + enrollment in one round-trip
+async function getLessonWithAccess(lessonId, userId) {
+  const lesson = await prisma.lesson.findUnique({
+    where: { id: lessonId },
+    include: {
+      module: {
+        select: {
+          courseId: true,
+          course: {
+            select: {
+              instructorId: true,
+              isPublished: true,
+              enrollments: {
+                where: { userId },
+                select: { id: true },
+              },
             },
           },
         },
       },
-    })
+    },
+  })
+
+  if (!lesson) return { lesson: null, hasAccess: false }
+
+  const course = lesson.module.course
+  const isInstructor = course.instructorId === userId
+  const isEnrolled = course.enrollments.length > 0
+
+  return { lesson, course, hasAccess: isInstructor || isEnrolled, isInstructor }
+}
+
+// List comments for a lesson (paginated, newest first)
+router.get("/lessons/:id/comments", requireAuth, async (req, res) => {
+  try {
+    // Fix #6: validate query params with Zod
+    const paginationResult = paginationSchema.safeParse(req.query)
+    if (!paginationResult.success) {
+      return res.status(400).json({
+        error: "Invalid pagination params",
+        details: paginationResult.error.flatten().fieldErrors,
+      })
+    }
+
+    const { page, limit } = paginationResult.data
+    const skip = (page - 1) * limit
+
+    // Fix #9: single query for lesson + access check
+    const { lesson, course, hasAccess } = await getLessonWithAccess(
+      req.params.id,
+      req.user.id
+    )
 
     if (!lesson) {
       return res.status(404).json({ error: "Lesson not found" })
     }
 
-    const course = lesson.module.course
-    const isInstructor = course.instructorId === req.user.id
-
-    if (!isInstructor) {
-      const enrollment = await prisma.enrollment.findUnique({
-        where: {
-          userId_courseId: {
-            userId: req.user.id,
-            courseId: lesson.module.courseId,
-          },
-        },
-      })
-      if (!enrollment) {
-        return res.status(403).json({ error: "Must be enrolled to view comments" })
-      }
+    if (!hasAccess) {
+      return res.status(403).json({ error: "Must be enrolled to view comments" })
     }
 
     const [total, comments] = await Promise.all([
@@ -89,44 +120,29 @@ router.post("/lessons/:id/comments", requireAuth, async (req, res) => {
       })
     }
 
-    const lesson = await prisma.lesson.findUnique({
-      where: { id: req.params.id },
-      include: {
-        module: {
-          select: {
-            courseId: true,
-            course: {
-              select: { instructorId: true },
-            },
-          },
-        },
-      },
-    })
+    // Fix #9: single query for lesson + access check
+    const { lesson, hasAccess } = await getLessonWithAccess(
+      req.params.id,
+      req.user.id
+    )
 
     if (!lesson) {
       return res.status(404).json({ error: "Lesson not found" })
     }
 
-    const course = lesson.module.course
-    const isInstructor = course.instructorId === req.user.id
+    if (!hasAccess) {
+      return res.status(403).json({ error: "Must be enrolled to post comments" })
+    }
 
-    if (!isInstructor) {
-      const enrollment = await prisma.enrollment.findUnique({
-        where: {
-          userId_courseId: {
-            userId: req.user.id,
-            courseId: lesson.module.courseId,
-          },
-        },
-      })
-      if (!enrollment) {
-        return res.status(403).json({ error: "Must be enrolled to post comments" })
-      }
+    // Fix #11: strip HTML tags before storing
+    const sanitisedContent = stripHtml(parseResult.data.content)
+    if (!sanitisedContent.trim()) {
+      return res.status(400).json({ error: "Comment content cannot be empty after sanitisation" })
     }
 
     const comment = await prisma.comment.create({
       data: {
-        content: parseResult.data.content,
+        content: sanitisedContent,
         userId: req.user.id,
         lessonId: lesson.id,
       },

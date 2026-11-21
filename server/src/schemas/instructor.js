@@ -29,7 +29,7 @@ export const updateCourseSchema = z.object({
 
 export const publishCourseSchema = z.object({
   isPublished: z.boolean().optional(),
-})
+}).strict()
 
 export const createModuleSchema = z.object({
   title: z.string().trim().min(1, "Module title is required"),
@@ -82,4 +82,5 @@ export const generateNotesSchema = z.object({
   topic: z.string().trim().optional().nullable(),
   keywords: z.union([z.array(z.string()), z.string()]).optional().nullable(),
   level: z.string().trim().optional().nullable(),
+  lessonId: z.string().optional(), // optional ownership-check hint
 })
