@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react"
 import { useParams, Link, useNavigate } from "react-router-dom"
+import { BackButton } from "@/components/BackButton"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
@@ -58,6 +59,21 @@ export default function CourseEditor() {
     { prompt: "", options: ["", "", "", ""], correctIndex: 0 },
   ])
 
+  // Operation & Loading States
+  const [savingDetails, setSavingDetails] = useState(false)
+  const [detailsError, setDetailsError] = useState("")
+  const [togglingPublish, setTogglingPublish] = useState(false)
+  const [deletingCourse, setDeletingCourse] = useState(false)
+  const [savingModule, setSavingModule] = useState(false)
+  const [moduleError, setModuleError] = useState("")
+  const [deletingModuleId, setDeletingModuleId] = useState(null)
+  const [savingLesson, setSavingLesson] = useState(false)
+  const [lessonError, setLessonError] = useState("")
+  const [deletingLessonId, setDeletingLessonId] = useState(null)
+  const [savingQuiz, setSavingQuiz] = useState(false)
+  const [quizError, setQuizError] = useState("")
+  const [deletingQuiz, setDeletingQuiz] = useState(false)
+
   const fetchCourse = async () => {
     try {
       setLoading(true)
@@ -83,21 +99,26 @@ export default function CourseEditor() {
   // Course actions
   const handleTogglePublish = async () => {
     try {
+      setTogglingPublish(true)
       const res = await fetch(`/api/instructor/courses/${id}/publish`, {
         method: "PATCH",
         credentials: "include",
       })
-      if (!res.ok) throw new Error("Failed to toggle publish status")
       const data = await res.json()
+      if (!res.ok) throw new Error(data.error || "Failed to toggle publish status")
       setCourse((prev) => ({ ...prev, isPublished: data.course.isPublished }))
     } catch (err) {
-      alert(err.message)
+      setError(err.message)
+    } finally {
+      setTogglingPublish(false)
     }
   }
 
   const handleUpdateCourseDetails = async (e) => {
     e.preventDefault()
     try {
+      setSavingDetails(true)
+      setDetailsError("")
       const res = await fetch(`/api/instructor/courses/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -107,12 +128,14 @@ export default function CourseEditor() {
           description: courseDesc.trim() || null,
         }),
       })
-      if (!res.ok) throw new Error("Failed to update course details")
       const data = await res.json()
+      if (!res.ok) throw new Error(data.error || "Failed to update course details")
       setCourse((prev) => ({ ...prev, ...data.course }))
       setIsCourseModalOpen(false)
     } catch (err) {
-      alert(err.message)
+      setDetailsError(err.message)
+    } finally {
+      setSavingDetails(false)
     }
   }
 
@@ -121,14 +144,19 @@ export default function CourseEditor() {
       return
     }
     try {
+      setDeletingCourse(true)
       const res = await fetch(`/api/instructor/courses/${id}`, {
         method: "DELETE",
         credentials: "include",
       })
-      if (!res.ok) throw new Error("Failed to delete course")
+      if (!res.ok) {
+        const d = await res.json()
+        throw new Error(d.error || "Failed to delete course")
+      }
       navigate("/instructor")
     } catch (err) {
-      alert(err.message)
+      setError(err.message)
+      setDeletingCourse(false)
     }
   }
 
@@ -136,12 +164,14 @@ export default function CourseEditor() {
   const openCreateModule = () => {
     setEditingModule(null)
     setModuleTitle("")
+    setModuleError("")
     setIsModuleModalOpen(true)
   }
 
   const openEditModule = (mod) => {
     setEditingModule(mod)
     setModuleTitle(mod.title)
+    setModuleError("")
     setIsModuleModalOpen(true)
   }
 
@@ -150,6 +180,8 @@ export default function CourseEditor() {
     if (!moduleTitle.trim()) return
 
     try {
+      setSavingModule(true)
+      setModuleError("")
       if (editingModule) {
         const res = await fetch(`/api/instructor/modules/${editingModule.id}`, {
           method: "PUT",
@@ -157,7 +189,8 @@ export default function CourseEditor() {
           credentials: "include",
           body: JSON.stringify({ title: moduleTitle.trim() }),
         })
-        if (!res.ok) throw new Error("Failed to update module")
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error || "Failed to update module")
       } else {
         const res = await fetch(`/api/instructor/courses/${id}/modules`, {
           method: "POST",
@@ -165,27 +198,36 @@ export default function CourseEditor() {
           credentials: "include",
           body: JSON.stringify({ title: moduleTitle.trim() }),
         })
-        if (!res.ok) throw new Error("Failed to create module")
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error || "Failed to create module")
       }
 
       setIsModuleModalOpen(false)
       await fetchCourse()
     } catch (err) {
-      alert(err.message)
+      setModuleError(err.message)
+    } finally {
+      setSavingModule(false)
     }
   }
 
   const handleDeleteModule = async (moduleId) => {
     if (!window.confirm("Delete this module and its lessons?")) return
     try {
+      setDeletingModuleId(moduleId)
       const res = await fetch(`/api/instructor/modules/${moduleId}`, {
         method: "DELETE",
         credentials: "include",
       })
-      if (!res.ok) throw new Error("Failed to delete module")
+      if (!res.ok) {
+        const d = await res.json()
+        throw new Error(d.error || "Failed to delete module")
+      }
       await fetchCourse()
     } catch (err) {
-      alert(err.message)
+      setError(err.message)
+    } finally {
+      setDeletingModuleId(null)
     }
   }
 
@@ -201,6 +243,7 @@ export default function CourseEditor() {
     setLessonLevel("Beginner")
     setLessonKeywords("")
     setLessonAiContext("")
+    setLessonError("")
     setGenerateNotesError(null)
     setIsLessonModalOpen(true)
   }
@@ -216,13 +259,14 @@ export default function CourseEditor() {
     setLessonLevel(lesson.level || "Beginner")
     setLessonKeywords(Array.isArray(lesson.keywords) ? lesson.keywords.join(", ") : "")
     setLessonAiContext(lesson.aiContext || "")
+    setLessonError("")
     setGenerateNotesError(null)
     setIsLessonModalOpen(true)
   }
 
   const handleGenerateNotes = async () => {
     if (!lessonTitle.trim()) {
-      alert("Please enter a lesson title before generating notes.")
+      setGenerateNotesError("Please enter a lesson title before generating notes.")
       return
     }
 
@@ -274,6 +318,8 @@ export default function CourseEditor() {
     }
 
     try {
+      setSavingLesson(true)
+      setLessonError("")
       if (editingLesson) {
         const res = await fetch(`/api/instructor/lessons/${editingLesson.id}`, {
           method: "PUT",
@@ -301,13 +347,16 @@ export default function CourseEditor() {
       setIsLessonModalOpen(false)
       await fetchCourse()
     } catch (err) {
-      alert(err.message)
+      setLessonError(err.message)
+    } finally {
+      setSavingLesson(false)
     }
   }
 
   const handleDeleteLesson = async (lessonId) => {
     if (!window.confirm("Delete this lesson?")) return
     try {
+      setDeletingLessonId(lessonId)
       const res = await fetch(`/api/instructor/lessons/${lessonId}`, {
         method: "DELETE",
         credentials: "include",
@@ -315,13 +364,16 @@ export default function CourseEditor() {
       if (!res.ok) throw new Error("Failed to delete lesson")
       await fetchCourse()
     } catch (err) {
-      alert(err.message)
+      setError(err.message)
+    } finally {
+      setDeletingLessonId(null)
     }
   }
 
   // Quiz actions
   const openQuizEditor = async (mod) => {
     setQuizModuleId(mod.id)
+    setQuizError("")
     if (mod.quiz) {
       setQuizId(mod.quiz.id)
       try {
@@ -372,6 +424,7 @@ export default function CourseEditor() {
   }
 
   const handleRemoveQuestion = (idx) => {
+    if (!window.confirm("Remove this question?")) return
     setQuizQuestions((prev) => prev.filter((_, i) => i !== idx))
   }
 
@@ -383,18 +436,20 @@ export default function CourseEditor() {
     for (let i = 0; i < quizQuestions.length; i++) {
       const q = quizQuestions[i]
       if (!q.prompt.trim()) {
-        alert(`Question ${i + 1} prompt cannot be empty`)
+        setQuizError(`Question ${i + 1} prompt cannot be empty`)
         return
       }
       for (let j = 0; j < 4; j++) {
         if (!q.options[j]?.trim()) {
-          alert(`Question ${i + 1}, option ${String.fromCharCode(65 + j)} cannot be empty`)
+          setQuizError(`Question ${i + 1}, option ${String.fromCharCode(65 + j)} cannot be empty`)
           return
         }
       }
     }
 
     try {
+      setSavingQuiz(true)
+      setQuizError("")
       const res = await fetch(`/api/instructor/modules/${quizModuleId}/quiz`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -419,13 +474,17 @@ export default function CourseEditor() {
       setIsQuizModalOpen(false)
       await fetchCourse()
     } catch (err) {
-      alert(err.message)
+      setQuizError(err.message)
+    } finally {
+      setSavingQuiz(false)
     }
   }
 
   const handleDeleteQuiz = async (quizIdToDelete) => {
     if (!window.confirm("Delete this module quiz?")) return
     try {
+      setDeletingQuiz(true)
+      setQuizError("")
       const res = await fetch(`/api/instructor/quizzes/${quizIdToDelete}`, {
         method: "DELETE",
         credentials: "include",
@@ -434,7 +493,9 @@ export default function CourseEditor() {
       setIsQuizModalOpen(false)
       await fetchCourse()
     } catch (err) {
-      alert(err.message)
+      setQuizError(err.message)
+    } finally {
+      setDeletingQuiz(false)
     }
   }
 
@@ -450,9 +511,9 @@ export default function CourseEditor() {
     return (
       <div className="container mx-auto p-6 max-w-4xl text-center space-y-4">
         <p className="text-destructive">{error || "Course not found"}</p>
-        <Link to="/instructor">
-          <Button variant="outline">Back to Courses</Button>
-        </Link>
+        <div>
+          <BackButton fallbackPath="/instructor" label="Back to Courses" variant="outline" />
+        </div>
       </div>
     )
   }
@@ -461,13 +522,18 @@ export default function CourseEditor() {
     <div className="container mx-auto p-6 max-w-5xl space-y-8">
       {/* Top Navigation & Status */}
       <div className="flex flex-col gap-4 border-b pb-6 sm:flex-row sm:items-center sm:justify-between">
-        <div className="space-y-1">
-          <Link
-            to="/instructor"
-            className="text-xs text-muted-foreground hover:underline inline-block mb-1"
-          >
-            ← Back to Courses
-          </Link>
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <BackButton fallbackPath="/instructor" />
+            <span className="text-muted-foreground/60 text-xs">|</span>
+            <nav aria-label="Breadcrumb" className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Link to="/instructor" className="hover:text-foreground hover:underline transition-colors">
+                My Courses
+              </Link>
+              <span aria-hidden="true">&gt;</span>
+              <span className="font-medium text-foreground truncate max-w-xs">{course.title}</span>
+            </nav>
+          </div>
           <div className="flex items-center gap-3">
             <h1 className="text-3xl font-bold tracking-tight">{course.title}</h1>
             <Badge variant={course.isPublished ? "success" : "secondary"}>
@@ -480,18 +546,33 @@ export default function CourseEditor() {
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
-          <Button variant="outline" size="sm" onClick={() => setIsCourseModalOpen(true)}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setIsCourseModalOpen(true)}
+            disabled={togglingPublish || deletingCourse}
+          >
             Edit Details
           </Button>
           <Button
             variant={course.isPublished ? "outline" : "default"}
             size="sm"
             onClick={handleTogglePublish}
+            disabled={togglingPublish || deletingCourse}
           >
-            {course.isPublished ? "Unpublish Course" : "Publish Course"}
+            {togglingPublish
+              ? "Updating..."
+              : course.isPublished
+              ? "Unpublish Course"
+              : "Publish Course"}
           </Button>
-          <Button variant="destructive" size="sm" onClick={handleDeleteCourse}>
-            Delete Course
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={handleDeleteCourse}
+            disabled={deletingCourse || togglingPublish}
+          >
+            {deletingCourse ? "Deleting..." : "Delete Course"}
           </Button>
         </div>
       </div>
@@ -528,7 +609,7 @@ export default function CourseEditor() {
           <div className="space-y-6">
             {course.modules.map((mod, modIdx) => (
               <Card key={mod.id} className="border">
-                <CardHeader className="bg-muted/40 py-3 px-4 flex flex-row items-center justify-between space-y-0">
+                <CardHeader className="bg-muted/40 py-3 px-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 space-y-0">
                   <div className="flex items-center gap-2">
                     <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Module {modIdx + 1}
@@ -536,7 +617,7 @@ export default function CourseEditor() {
                     <h3 className="font-semibold text-base">{mod.title}</h3>
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <Button
                       variant={mod.quiz ? "secondary" : "outline"}
                       size="sm"
@@ -563,8 +644,9 @@ export default function CourseEditor() {
                       size="sm"
                       className="text-destructive hover:text-destructive"
                       onClick={() => handleDeleteModule(mod.id)}
+                      disabled={deletingModuleId === mod.id}
                     >
-                      Delete
+                      {deletingModuleId === mod.id ? "Deleting..." : "Delete"}
                     </Button>
                   </div>
                 </CardHeader>
@@ -646,8 +728,9 @@ export default function CourseEditor() {
                               size="sm"
                               className="text-destructive hover:text-destructive"
                               onClick={() => handleDeleteLesson(lesson.id)}
+                              disabled={deletingLessonId === lesson.id}
                             >
-                              Delete
+                              {deletingLessonId === lesson.id ? "Deleting..." : "Delete"}
                             </Button>
                           </div>
                         </div>
@@ -668,6 +751,7 @@ export default function CourseEditor() {
           <DialogDescription>Update the title and description for this course.</DialogDescription>
         </DialogHeader>
         <form onSubmit={handleUpdateCourseDetails} className="space-y-4">
+          {detailsError && <p className="text-xs text-destructive">{detailsError}</p>}
           <div className="space-y-2">
             <Label htmlFor="c-title">Course Title</Label>
             <Input
@@ -693,7 +777,9 @@ export default function CourseEditor() {
             >
               Cancel
             </Button>
-            <Button type="submit">Save Changes</Button>
+            <Button type="submit" disabled={savingDetails}>
+              {savingDetails ? "Saving..." : "Save Changes"}
+            </Button>
           </DialogFooter>
         </form>
       </Dialog>
@@ -709,6 +795,7 @@ export default function CourseEditor() {
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSaveModule} className="space-y-4">
+          {moduleError && <p className="text-xs text-destructive">{moduleError}</p>}
           <div className="space-y-2">
             <Label htmlFor="m-title">Module Title</Label>
             <Input
@@ -727,7 +814,9 @@ export default function CourseEditor() {
             >
               Cancel
             </Button>
-            <Button type="submit">{editingModule ? "Save" : "Add Module"}</Button>
+            <Button type="submit" disabled={savingModule}>
+              {savingModule ? "Saving..." : editingModule ? "Save" : "Add Module"}
+            </Button>
           </DialogFooter>
         </form>
       </Dialog>
@@ -741,6 +830,7 @@ export default function CourseEditor() {
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSaveLesson} className="space-y-4">
+          {lessonError && <p className="text-xs text-destructive">{lessonError}</p>}
           <div className="space-y-2">
             <Label htmlFor="l-title">Lesson Title</Label>
             <Input
@@ -909,7 +999,9 @@ export default function CourseEditor() {
             >
               Cancel
             </Button>
-            <Button type="submit">{editingLesson ? "Save Changes" : "Create Lesson"}</Button>
+            <Button type="submit" disabled={savingLesson}>
+              {savingLesson ? "Saving..." : editingLesson ? "Save Changes" : "Create Lesson"}
+            </Button>
           </DialogFooter>
         </form>
       </Dialog>
@@ -922,7 +1014,8 @@ export default function CourseEditor() {
             Add multiple choice questions with a designated correct answer.
           </DialogDescription>
         </DialogHeader>
-        <form onSubmit={handleSaveQuiz} className="space-y-4 max-h-[75vh] overflow-y-auto pr-1">
+        <form onSubmit={handleSaveQuiz} className="space-y-4">
+          {quizError && <p className="text-xs text-destructive">{quizError}</p>}
           <div className="space-y-2">
             <Label htmlFor="q-title">Quiz Title</Label>
             <Input
@@ -1052,8 +1145,9 @@ export default function CourseEditor() {
                 variant="destructive"
                 size="sm"
                 onClick={() => handleDeleteQuiz(quizId)}
+                disabled={deletingQuiz || savingQuiz}
               >
-                Delete Quiz
+                {deletingQuiz ? "Deleting..." : "Delete Quiz"}
               </Button>
             )}
             <div className="flex gap-2">
@@ -1061,10 +1155,13 @@ export default function CourseEditor() {
                 type="button"
                 variant="outline"
                 onClick={() => setIsQuizModalOpen(false)}
+                disabled={savingQuiz || deletingQuiz}
               >
                 Cancel
               </Button>
-              <Button type="submit">Save Quiz</Button>
+              <Button type="submit" disabled={savingQuiz || deletingQuiz}>
+                {savingQuiz ? "Saving..." : "Save Quiz"}
+              </Button>
             </div>
           </DialogFooter>
         </form>

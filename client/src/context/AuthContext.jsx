@@ -30,6 +30,30 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     checkAuth()
+
+    // Global 401 interceptor
+    const originalFetch = window.fetch
+    window.fetch = async (...args) => {
+      const response = await originalFetch(...args)
+      const url = typeof args[0] === "string" ? args[0] : args[0]?.url || ""
+      if (
+        response.status === 401 &&
+        url.startsWith("/api/") &&
+        !url.includes("/api/auth/login") &&
+        !url.includes("/api/auth/signup") &&
+        !url.includes("/api/me")
+      ) {
+        setUser(null)
+        if (window.location.pathname !== "/login" && window.location.pathname !== "/signup") {
+          window.location.href = "/login"
+        }
+      }
+      return response
+    }
+
+    return () => {
+      window.fetch = originalFetch
+    }
   }, [])
 
   const login = async (email, password) => {

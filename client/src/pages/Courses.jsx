@@ -30,19 +30,22 @@ export default function Courses() {
         fetch("/api/courses", { credentials: "include" }),
       ])
 
-      if (enrolledRes.ok) {
+      if (!enrolledRes.ok) {
         const data = await enrolledRes.json()
-        setEnrolledCourses(data.enrolledCourses || [])
-        // If no enrolled courses yet, default to catalog
-        if ((data.enrolledCourses || []).length === 0) {
-          setTab("catalog")
-        }
+        throw new Error(data.error || "Failed to load enrolled courses")
+      }
+      const enrolledData = await enrolledRes.json()
+      setEnrolledCourses(enrolledData.enrolledCourses || [])
+      if ((enrolledData.enrolledCourses || []).length === 0) {
+        setTab("catalog")
       }
 
-      if (catalogRes.ok) {
+      if (!catalogRes.ok) {
         const data = await catalogRes.json()
-        setCatalogCourses(data.courses || [])
+        throw new Error(data.error || "Failed to load course catalog")
       }
+      const catalogData = await catalogRes.json()
+      setCatalogCourses(catalogData.courses || [])
     } catch (err) {
       setError(err.message || "Failed to load courses")
     } finally {

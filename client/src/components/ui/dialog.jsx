@@ -1,13 +1,18 @@
 import * as React from "react"
 import { cn } from "@/lib/utils"
 
-export function Dialog({ open, onClose, children }) {
+export function Dialog({ open, onClose, className, children }) {
   if (!open) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm overflow-y-auto">
       <div className="fixed inset-0" onClick={onClose} aria-hidden="true" />
-      <div className="relative z-50 w-full max-w-lg rounded-lg border bg-background p-6 shadow-lg">
+      <div
+        className={cn(
+          "relative z-50 w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-lg border bg-background p-6 shadow-lg",
+          className
+        )}
+      >
         {children}
       </div>
     </div>

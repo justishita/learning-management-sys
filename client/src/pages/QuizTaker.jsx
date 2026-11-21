@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react"
 import { useParams, Link } from "react-router-dom"
+import { BackButton } from "@/components/BackButton"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card"
@@ -15,8 +16,26 @@ export default function QuizTaker() {
   const [saveStatus, setSaveStatus] = useState("idle") // "idle" | "saving" | "saved" | "error"
   const [timeLeft, setTimeLeft] = useState(null)
   const [error, setError] = useState("")
+  const [submitError, setSubmitError] = useState("")
 
   const autosaveTimeoutRef = useRef(null)
+  const autoSubmitAttemptedRef = useRef(false)
+
+  // Flush / clean up autosave on unmount or unload
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (autosaveTimeoutRef.current) {
+        clearTimeout(autosaveTimeoutRef.current)
+      }
+    }
+    window.addEventListener("beforeunload", handleBeforeUnload)
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload)
+      if (autosaveTimeoutRef.current) {
+        clearTimeout(autosaveTimeoutRef.current)
+      }
+    }
+  }, [])
 
   const fetchQuiz = async () => {
     try {
@@ -54,8 +73,9 @@ export default function QuizTaker() {
       )
       setTimeLeft(remainingSec)
 
-      // When local display hits 0, trigger submit to trigger server lazy grade
-      if (remainingSec <= 0 && !submitting) {
+      // When local display hits 0, trigger submit once to trigger server lazy grade
+      if (remainingSec <= 0 && !submitting && !autoSubmitAttemptedRef.current) {
+        autoSubmitAttemptedRef.current = true
         handleSubmit(true)
       }
     }
@@ -68,6 +88,7 @@ export default function QuizTaker() {
   const handleStartQuiz = async () => {
     try {
       setSubmitting(true)
+      setSubmitError("")
       const res = await fetch(`/api/quizzes/${quizId}/start`, {
         method: "POST",
         credentials: "include",
@@ -77,13 +98,14 @@ export default function QuizTaker() {
         throw new Error(data.error || "Failed to start quiz")
       }
       const data = await res.json()
+      autoSubmitAttemptedRef.current = false
       setAttempt(data.attempt)
       setQuiz((prev) => ({ ...prev, questions: data.questions }))
       if (data.attempt?.answers) {
         setAnswers(data.attempt.answers)
       }
     } catch (err) {
-      alert(err.message)
+      setSubmitError(err.message)
     } finally {
       setSubmitting(false)
     }
@@ -144,8 +166,14 @@ export default function QuizTaker() {
       return
     }
 
+    if (autosaveTimeoutRef.current) {
+      clearTimeout(autosaveTimeoutRef.current)
+      autosaveTimeoutRef.current = null
+    }
+
     try {
       setSubmitting(true)
+      setSubmitError("")
       const res = await fetch(`/api/quizzes/${quizId}/submit`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -162,7 +190,7 @@ export default function QuizTaker() {
       setAttempt(data.attempt)
       setQuiz((prev) => ({ ...prev, questions: data.questions }))
     } catch (err) {
-      alert(err.message)
+      setSubmitError(err.message)
     } finally {
       setSubmitting(false)
     }
@@ -187,9 +215,9 @@ export default function QuizTaker() {
     return (
       <div className="container mx-auto p-6 max-w-xl text-center space-y-4">
         <p className="text-destructive">{error || "Quiz not found"}</p>
-        <Link to="/courses">
-          <Button variant="outline">Return to Courses</Button>
-        </Link>
+        <div>
+          <BackButton fallbackPath="/courses" label="Return to Courses" variant="outline" />
+        </div>
       </div>
     )
   }
@@ -202,14 +230,18 @@ export default function QuizTaker() {
     <div className="container mx-auto p-6 max-w-3xl space-y-6">
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b pb-4 gap-3">
-        <div>
-          <Link
-            to={`/courses/${quiz.courseId}`}
-            className="text-xs text-muted-foreground hover:underline"
-          >
-            ← {quiz.courseTitle}
-          </Link>
-          <h1 className="text-2xl font-bold tracking-tight mt-1">{quiz.title}</h1>
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <BackButton fallbackPath={`/courses/${quiz.courseId}`} />
+            <span className="text-muted-foreground/60 text-xs">|</span>
+            <Link
+              to={`/courses/${quiz.courseId}`}
+              className="text-xs text-muted-foreground hover:underline"
+            >
+              {quiz.courseTitle}
+            </Link>
+          </div>
+          <h1 className="text-2xl font-bold tracking-tight">{quiz.title}</h1>
         </div>
 
         {attempt && !isSubmitted && (
@@ -254,6 +286,7 @@ export default function QuizTaker() {
               </div>
             </div>
 
+            {submitError && <p className="text-xs text-destructive">{submitError}</p>}
             <Button size="lg" onClick={handleStartQuiz} disabled={submitting} className="w-full">
               {submitting ? "Starting..." : "Start Quiz Attempt"}
             </Button>
@@ -410,14 +443,17 @@ export default function QuizTaker() {
               {Object.keys(answers).length} of {quiz.questions.length} answered • Answers autosaved
             </span>
 
-            <Button
-              size="lg"
-              onClick={() => handleSubmit(false)}
-              disabled={submitting}
-              className="w-full sm:w-auto"
-            >
-              {submitting ? "Submitting..." : "Submit Quiz"}
-            </Button>
+            <div className="flex flex-col sm:flex-row items-center gap-2 w-full sm:w-auto">
+              {submitError && <span className="text-xs text-destructive">{submitError}</span>}
+              <Button
+                size="lg"
+                onClick={() => handleSubmit(false)}
+                disabled={submitting}
+                className="w-full sm:w-auto"
+              >
+                {submitting ? "Submitting..." : "Submit Quiz"}
+              </Button>
+            </div>
           </div>
         </div>
       )}

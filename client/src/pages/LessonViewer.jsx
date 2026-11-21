@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react"
 import { useParams, Link } from "react-router-dom"
 import { useAuth } from "@/context/AuthContext"
+import { BackButton } from "@/components/BackButton"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
@@ -35,6 +36,7 @@ export default function LessonViewer() {
   const [commentText, setCommentText] = useState("")
   const [commentPosting, setCommentPosting] = useState(false)
   const [commentError, setCommentError] = useState("")
+  const [deletingCommentId, setDeletingCommentId] = useState(null)
 
   const COMMENT_LIMIT = 10
 
@@ -137,6 +139,8 @@ export default function LessonViewer() {
   const handleDeleteComment = async (commentId) => {
     if (!window.confirm("Delete this comment?")) return
     try {
+      setDeletingCommentId(commentId)
+      setCommentError("")
       const res = await fetch(`/api/comments/${commentId}`, {
         method: "DELETE",
         credentials: "include",
@@ -147,8 +151,13 @@ export default function LessonViewer() {
       }
       setComments((prev) => prev.filter((c) => c.id !== commentId))
       setCommentTotal((prev) => Math.max(0, prev - 1))
+      if (comments.length === 1 && commentPage > 1) {
+        fetchComments(commentPage - 1)
+      }
     } catch (err) {
-      alert(err.message)
+      setCommentError(err.message)
+    } finally {
+      setDeletingCommentId(null)
     }
   }
 
@@ -163,7 +172,10 @@ export default function LessonViewer() {
         body: JSON.stringify({ isCompleted: !lesson.isCompleted }),
       })
 
-      if (!res.ok) throw new Error("Failed to update progress")
+      if (!res.ok) {
+        const data = await res.json()
+        throw new Error(data.error || "Failed to update progress")
+      }
       const data = await res.json()
 
       setLesson((prev) => ({
@@ -180,7 +192,7 @@ export default function LessonViewer() {
         }))
       )
     } catch (err) {
-      alert(err.message)
+      console.error(err)
     } finally {
       setMarking(false)
     }
@@ -238,9 +250,9 @@ export default function LessonViewer() {
     return (
       <div className="container mx-auto p-6 max-w-4xl text-center space-y-4">
         <p className="text-destructive">{error || "Lesson not found"}</p>
-        <Link to={`/courses/${courseId}`}>
-          <Button variant="outline">Return to Course Overview</Button>
-        </Link>
+        <div>
+          <BackButton fallbackPath={`/courses/${courseId}`} label="Return to Course Overview" variant="outline" />
+        </div>
       </div>
     )
   }
@@ -250,15 +262,17 @@ export default function LessonViewer() {
       {/* Top Header / Progress Bar */}
       <div className="border-b bg-card px-4 py-3 sticky top-0 z-10 shadow-xs">
         <div className="container mx-auto flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 flex-wrap min-w-0">
+            <BackButton fallbackPath={`/courses/${courseId}`} />
+            <span className="text-muted-foreground/60 text-xs">|</span>
             <Link
               to={`/courses/${courseId}`}
-              className="text-xs text-muted-foreground hover:underline"
+              className="text-xs text-muted-foreground hover:underline truncate max-w-[120px] sm:max-w-[160px]"
             >
-              ← {lesson.courseTitle}
+              {lesson.courseTitle}
             </Link>
             <span className="text-muted-foreground">•</span>
-            <span className="text-sm font-semibold truncate max-w-xs sm:max-w-md">
+            <span className="text-sm font-semibold truncate max-w-[160px] sm:max-w-md">
               {lesson.title}
             </span>
           </div>
@@ -636,9 +650,10 @@ export default function LessonViewer() {
                         {canDelete && (
                           <button
                             onClick={() => handleDeleteComment(c.id)}
-                            className="text-[11px] text-muted-foreground hover:text-destructive shrink-0 transition-colors"
+                            disabled={deletingCommentId === c.id}
+                            className="text-[11px] text-muted-foreground hover:text-destructive shrink-0 transition-colors disabled:opacity-50"
                           >
-                            Delete
+                            {deletingCommentId === c.id ? "Deleting..." : "Delete"}
                           </button>
                         )}
                       </div>

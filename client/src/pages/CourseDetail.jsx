@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react"
 import { useParams, Link, useNavigate } from "react-router-dom"
 import { useAuth } from "@/context/AuthContext"
+import { BackButton } from "@/components/BackButton"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
@@ -15,6 +16,7 @@ export default function CourseDetail() {
   const [loading, setLoading] = useState(true)
   const [enrolling, setEnrolling] = useState(false)
   const [error, setError] = useState("")
+  const [enrollError, setEnrollError] = useState("")
 
   const fetchCourse = async () => {
     try {
@@ -45,6 +47,7 @@ export default function CourseDetail() {
 
     try {
       setEnrolling(true)
+      setEnrollError("")
       const res = await fetch(`/api/courses/${id}/enroll`, {
         method: "POST",
         credentials: "include",
@@ -57,7 +60,7 @@ export default function CourseDetail() {
 
       await fetchCourse()
     } catch (err) {
-      alert(err.message)
+      setEnrollError(err.message)
     } finally {
       setEnrolling(false)
     }
@@ -75,9 +78,9 @@ export default function CourseDetail() {
     return (
       <div className="container mx-auto p-6 max-w-4xl text-center space-y-4">
         <p className="text-destructive">{error || "Course unavailable"}</p>
-        <Link to="/courses">
-          <Button variant="outline">Back to Catalog</Button>
-        </Link>
+        <div>
+          <BackButton fallbackPath="/courses" label="Back to Catalog" variant="outline" />
+        </div>
       </div>
     )
   }
@@ -86,9 +89,9 @@ export default function CourseDetail() {
   if (course.isTemporarilyUnavailable) {
     return (
       <div className="container mx-auto p-6 max-w-4xl space-y-6">
-        <Link to="/courses" className="text-xs text-muted-foreground hover:underline">
-          ← Back to My Courses
-        </Link>
+        <div>
+          <BackButton fallbackPath="/courses" label="Back to My Courses" />
+        </div>
         <Card className="opacity-70 bg-muted/30 border-dashed text-center p-8">
           <CardHeader>
             <div className="flex justify-center mb-2">
@@ -102,11 +105,7 @@ export default function CourseDetail() {
           </CardHeader>
           <CardContent className="max-w-xs mx-auto">
             <Progress value={course.progressPercentage} className="h-2 opacity-50 mb-4" />
-            <Link to="/courses">
-              <Button variant="outline" size="sm" className="w-full">
-                Return to Dashboard
-              </Button>
-            </Link>
+            <BackButton fallbackPath="/courses" label="Return to Dashboard" variant="outline" size="sm" className="w-full justify-center" />
           </CardContent>
         </Card>
       </div>
@@ -117,9 +116,9 @@ export default function CourseDetail() {
     <div className="container mx-auto p-6 max-w-4xl space-y-8">
       {/* Top Banner */}
       <div className="space-y-4 border-b pb-6">
-        <Link to="/courses" className="text-xs text-muted-foreground hover:underline">
-          ← Back to Courses
-        </Link>
+        <div>
+          <BackButton fallbackPath="/courses" />
+        </div>
 
         <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-6">
           <div className="space-y-2 flex-1">
@@ -168,6 +167,7 @@ export default function CourseDetail() {
                 <p className="text-xs text-muted-foreground">
                   Get full access to all {course.totalLessons} lessons and interactive exercises.
                 </p>
+                {enrollError && <p className="text-xs text-destructive">{enrollError}</p>}
                 <Button
                   onClick={handleEnroll}
                   disabled={enrolling}
@@ -190,93 +190,110 @@ export default function CourseDetail() {
           </p>
         </div>
 
-        <div className="space-y-4">
-          {course.modules.map((mod, modIdx) => (
-            <Card key={mod.id}>
-              <CardHeader className="py-3 px-4 bg-muted/40">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    Module {modIdx + 1}
-                  </span>
-                  <CardTitle className="text-base font-semibold">{mod.title}</CardTitle>
-                </div>
-              </CardHeader>
-              <CardContent className="p-0 divide-y">
-                {mod.lessons.map((lesson, lessIdx) => (
-                  <div
-                    key={lesson.id}
-                    className="flex items-center justify-between p-3.5 hover:bg-muted/20 transition-colors"
-                  >
-                    <div className="flex items-center gap-3">
-                      <span className="text-xs font-mono text-muted-foreground w-6">
-                        {modIdx + 1}.{lessIdx + 1}
-                      </span>
-                      <Badge
-                        variant={lesson.type === "VIDEO" ? "default" : "secondary"}
-                        className="text-[10px] px-1.5 py-0"
+        {course.modules.length === 0 ? (
+          <Card className="text-center p-8 border-dashed">
+            <CardHeader>
+              <CardTitle className="text-base">No modules available</CardTitle>
+              <CardDescription>
+                The instructor has not added modules to this course yet.
+              </CardDescription>
+            </CardHeader>
+          </Card>
+        ) : (
+          <div className="space-y-4">
+            {course.modules.map((mod, modIdx) => (
+              <Card key={mod.id}>
+                <CardHeader className="py-3 px-4 bg-muted/40">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Module {modIdx + 1}
+                    </span>
+                    <CardTitle className="text-base font-semibold">{mod.title}</CardTitle>
+                  </div>
+                </CardHeader>
+                <CardContent className="p-0 divide-y">
+                  {mod.lessons.length === 0 && !mod.quiz ? (
+                    <p className="p-4 text-xs text-muted-foreground italic">
+                      No lessons in this module yet.
+                    </p>
+                  ) : (
+                    mod.lessons.map((lesson, lessIdx) => (
+                      <div
+                        key={lesson.id}
+                        className="flex items-center justify-between p-3.5 hover:bg-muted/20 transition-colors"
                       >
-                        {lesson.type}
-                      </Badge>
-                      <span className="text-sm font-medium">{lesson.title}</span>
-                      {lesson.level && (
-                        <span className="text-[11px] text-muted-foreground border rounded px-1.5 py-0.5">
-                          {lesson.level}
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="flex items-center gap-3">
-                      {course.isEnrolled && (
-                        lesson.isCompleted ? (
-                          <Badge variant="success" className="text-xs">
-                            ✓ Completed
+                        <div className="flex items-center gap-3">
+                          <span className="text-xs font-mono text-muted-foreground w-6">
+                            {modIdx + 1}.{lessIdx + 1}
+                          </span>
+                          <Badge
+                            variant={lesson.type === "VIDEO" ? "default" : "secondary"}
+                            className="text-[10px] px-1.5 py-0"
+                          >
+                            {lesson.type}
                           </Badge>
-                        ) : (
-                          <span className="text-xs text-muted-foreground">To do</span>
-                        )
-                      )}
+                          <span className="text-sm font-medium">{lesson.title}</span>
+                          {lesson.level && (
+                            <span className="text-[11px] text-muted-foreground border rounded px-1.5 py-0.5">
+                              {lesson.level}
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-3">
+                          {course.isEnrolled && (
+                            lesson.isCompleted ? (
+                              <Badge variant="success" className="text-xs">
+                                ✓ Completed
+                              </Badge>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">To do</span>
+                            )
+                          )}
+
+                          {course.isEnrolled ? (
+                            <Link to={`/courses/${course.id}/lessons/${lesson.id}`}>
+                              <Button variant="ghost" size="sm">
+                                {lesson.isCompleted ? "Review" : "Start"}
+                              </Button>
+                            </Link>
+                          ) : (
+                            <span className="text-xs text-muted-foreground italic pr-2">
+                              Enroll to view
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    ))
+                  )}
+
+                  {mod.quiz && (
+                    <div className="flex items-center justify-between p-3.5 bg-primary/5 hover:bg-primary/10 transition-colors">
+                      <div className="flex items-center gap-3">
+                        <Badge variant="outline" className="text-[10px] bg-background">
+                          Assessment
+                        </Badge>
+                        <span className="text-sm font-semibold">Quiz: {mod.quiz.title}</span>
+                      </div>
 
                       {course.isEnrolled ? (
-                        <Link to={`/courses/${course.id}/lessons/${lesson.id}`}>
-                          <Button variant="ghost" size="sm">
-                            {lesson.isCompleted ? "Review" : "Start"}
+                        <Link to={`/quizzes/${mod.quiz.id}`}>
+                          <Button size="sm">
+                            Take Quiz
                           </Button>
                         </Link>
                       ) : (
                         <span className="text-xs text-muted-foreground italic pr-2">
-                          Enroll to view
+                          Enroll to take quiz
                         </span>
                       )}
                     </div>
-                  </div>
-                ))}
-
-                {mod.quiz && (
-                  <div className="flex items-center justify-between p-3.5 bg-primary/5 hover:bg-primary/10 transition-colors">
-                    <div className="flex items-center gap-3">
-                      <Badge variant="outline" className="text-[10px] bg-background">
-                        Assessment
-                      </Badge>
-                      <span className="text-sm font-semibold">Quiz: {mod.quiz.title}</span>
-                    </div>
-
-                    {course.isEnrolled ? (
-                      <Link to={`/quizzes/${mod.quiz.id}`}>
-                        <Button size="sm">
-                          Take Quiz
-                        </Button>
-                      </Link>
-                    ) : (
-                      <span className="text-xs text-muted-foreground italic pr-2">
-                        Enroll to take quiz
-                      </span>
-                    )}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+                  )}
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )

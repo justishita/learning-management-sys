@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react"
 import { Link } from "react-router-dom"
+import { BackButton } from "@/components/BackButton"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
@@ -33,6 +34,8 @@ export default function Instructor() {
   const [newTitle, setNewTitle] = useState("")
   const [newDescription, setNewDescription] = useState("")
   const [creating, setCreating] = useState(false)
+  const [createError, setCreateError] = useState("")
+  const [togglingCourseId, setTogglingCourseId] = useState(null)
 
   // Analytics State
   const [selectedCourseId, setSelectedCourseId] = useState("")
@@ -89,6 +92,7 @@ export default function Instructor() {
     e.preventDefault()
     if (!newTitle.trim()) return
     setCreating(true)
+    setCreateError("")
 
     try {
       const res = await fetch("/api/instructor/courses", {
@@ -111,7 +115,7 @@ export default function Instructor() {
       setIsModalOpen(false)
       await fetchCourses()
     } catch (err) {
-      alert(err.message)
+      setCreateError(err.message)
     } finally {
       setCreating(false)
     }
@@ -119,6 +123,8 @@ export default function Instructor() {
 
   const handleTogglePublish = async (courseId, currentStatus) => {
     try {
+      setTogglingCourseId(courseId)
+      setError("")
       const res = await fetch(`/api/instructor/courses/${courseId}/publish`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -126,19 +132,28 @@ export default function Instructor() {
         body: JSON.stringify({ isPublished: !currentStatus }),
       })
 
-      if (!res.ok) throw new Error("Failed to update status")
+      if (!res.ok) {
+        const errData = await res.json()
+        throw new Error(errData.error || "Failed to update status")
+      }
       const data = await res.json()
 
       setCourses((prev) =>
         prev.map((c) => (c.id === courseId ? { ...c, isPublished: data.course.isPublished } : c))
       )
     } catch (err) {
-      alert(err.message)
+      setError(err.message)
+    } finally {
+      setTogglingCourseId(null)
     }
   }
 
   return (
     <div className="container mx-auto p-6 max-w-5xl space-y-6">
+      <div>
+        <BackButton fallbackPath="/courses" label="Back to Courses" />
+      </div>
+
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
@@ -148,7 +163,7 @@ export default function Instructor() {
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           {/* Tab Switcher */}
           <div className="flex rounded-md border p-1 bg-muted/40">
             <Button
@@ -168,7 +183,14 @@ export default function Instructor() {
           </div>
 
           {tab === "courses" && (
-            <Button onClick={() => setIsModalOpen(true)}>+ New Course</Button>
+            <Button
+              onClick={() => {
+                setCreateError("")
+                setIsModalOpen(true)
+              }}
+            >
+              + New Course
+            </Button>
           )}
         </div>
       </div>
@@ -224,8 +246,13 @@ export default function Instructor() {
                     variant="outline"
                     size="sm"
                     onClick={() => handleTogglePublish(course.id, course.isPublished)}
+                    disabled={togglingCourseId === course.id}
                   >
-                    {course.isPublished ? "Unpublish" : "Publish"}
+                    {togglingCourseId === course.id
+                      ? "Updating..."
+                      : course.isPublished
+                      ? "Unpublish"
+                      : "Publish"}
                   </Button>
                   <Link to={`/instructor/courses/${course.id}`}>
                     <Button size="sm">Edit Curriculum</Button>
@@ -326,8 +353,8 @@ export default function Instructor() {
                     <table className="w-full text-left text-sm">
                       <thead className="bg-muted/40 text-xs uppercase text-muted-foreground border-b">
                         <tr>
-                          <th className="py-3 px-4 font-semibold">Student</th>
-                          <th className="py-3 px-4 font-semibold">Enrolled At</th>
+                          <th className="py-3 px-4 font-semibold min-w-[160px]">Student</th>
+                          <th className="py-3 px-4 font-semibold min-w-[120px]">Enrolled At</th>
                           <th className="py-3 px-4 font-semibold min-w-[150px]">Course Progress</th>
                           {analyticsData.course.quizModules.map((qm, idx) => (
                             <th key={qm.quizId} className="py-3 px-4 font-semibold whitespace-nowrap">
@@ -343,7 +370,7 @@ export default function Instructor() {
                         {analyticsData.students.map((student) => (
                           <tr key={student.studentId} className="hover:bg-muted/20 transition-colors">
                             {/* Student Name & Email */}
-                            <td className="py-3 px-4">
+                            <td className="py-3 px-4 min-w-[160px]">
                               <div className="font-medium text-foreground">{student.name}</div>
                               <div className="text-xs text-muted-foreground font-mono">
                                 {student.email}
@@ -351,7 +378,7 @@ export default function Instructor() {
                             </td>
 
                             {/* Enrolled Date */}
-                            <td className="py-3 px-4 text-xs text-muted-foreground whitespace-nowrap">
+                            <td className="py-3 px-4 text-xs text-muted-foreground whitespace-nowrap min-w-[120px]">
                               {new Date(student.enrolledAt).toLocaleDateString()}
                             </td>
 
@@ -412,6 +439,7 @@ export default function Instructor() {
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleCreateCourse} className="space-y-4">
+          {createError && <p className="text-xs text-destructive">{createError}</p>}
           <div className="space-y-2">
             <Label htmlFor="title">Course Title</Label>
             <Input

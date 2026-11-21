@@ -406,7 +406,9 @@ router.post("/courses/:courseId/modules", async (req, res) => {
         courseId: course.id,
       },
       include: {
-        lessons: true,
+        lessons: {
+          orderBy: { position: "asc" },
+        },
       },
     })
 
